@@ -1,0 +1,49 @@
+/* 1️⃣ Import external styles first */
+@import url('./styles/neumorphism.css');
+
+/* 2️⃣ Tailwind directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 3️⃣ Custom base layer */
+@layer base {
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background-color: #FDF5F5;
+    color: #4A0000;
+    min-height: 100vh;
+    transition: background-color 0.3s, color 0.3s;
+  }
+
+  body.dark {
+    background-color: #3D0B0B;
+    color: #FADADA;
+  }
+
+  h1, h2, h3 {
+    font-family: 'Playfair Display', serif;
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #C4A0A0;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #8B1A1A; }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
+}
+
+/* 4️⃣ Custom components layer */
+@layer components {
+  .page-enter {
+    animation: slideUp 0.4s ease forwards;
+  }
+}

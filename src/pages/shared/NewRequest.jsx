@@ -1,0 +1,504 @@
+// src/pages/shared/NewRequest.jsx
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useAuth } from '../../context/AuthContext';
+import { 
+  Search, Plus, Trash2, Calendar, Clock, Users, ArrowRight, 
+  MapPin, CheckCircle2, AlertTriangle, X, DoorClosed, Package 
+} from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
+import toast from 'react-hot-toast';
+import { io } from 'socket.io-client'; // <-- NEW: Socket import
+import api from '../../api/axiosClient';
+import { listInventory } from '../../api/inventoryAPI';
+import { createRequest } from '../../api/requestAPI';
+import NeumorphCard from '../../components/ui/NeumorphCard';
+import NeumorphButton from '../../components/ui/NeumorphButton';
+import NeumorphInput from '../../components/ui/NeumorphInput';
+
+export default function NewRequest() {
+  const { user } = useAuth();
+  const isFaculty = user?.role === 'faculty';
+
+  // --- Room & Inventory State ---
+  const initialRoom = user?.room_id && user.room_id !== 'null' && user.room_id !== 'undefined' ? String(user.room_id) : '';
+  const [availableRooms, setAvailableRooms] = useState([]);
+  const [selectedRoomId, setSelectedRoomId] = useState(initialRoom);
+  
+  const [inventory, setInventory] = useState([]);
+  const [inventorySearch, setInventorySearch] = useState('');
+  const [refreshTrigger, setRefreshTrigger] = useState(0); // Used to force inventory fetch
+  
+  // --- Cart & Request State ---
+  const [cart, setCart] = useState([]);
+  const [companions, setCompanions] = useState([]);
+  const [purpose, setPurpose] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  // --- Faculty Scheduling State ---
+  const [scheduleType, setScheduleType] = useState('today'); 
+  const [facultyExtendedDate, setFacultyExtendedDate] = useState('');
+  const [facultyTodayEnd, setFacultyTodayEnd] = useState(''); 
+
+  // --- Success Modal State ---
+  const [successData, setSuccessData] = useState(null);
+  const [confirmClose, setConfirmClose] = useState(false);
+
+  // 1. Fetch Dynamic Room List & Setup Sockets
+  useEffect(() => {
+    const fetchRooms = async () => {
+      try {
+        const res = await api.get('/admin/rooms'); 
+        setAvailableRooms(res.data?.data || res.data || []);
+      } catch (err) {
+        toast.error('Could not load department rooms');
+      }
+    };
+    fetchRooms();
+
+    // --- REAL-TIME SOCKET CONNECTION ---
+    const socketURL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:4000';
+    const socket = io(socketURL);
+
+    // Listen for Room Lock/Unlock
+    socket.on('room-updated', (data) => {
+      setAvailableRooms(prev => prev.map(room => 
+        String(room.id) === String(data.roomId) 
+          ? { ...room, is_available: data.is_available, unavailable_reason: data.reason }
+          : room
+      ));
+    });
+
+    // Listen for Inventory Deductions (Admin issued an item)
+    socket.on('inventory-updated', () => {
+      setRefreshTrigger(prev => prev + 1); // Triggers the fetchInv useCallback below
+    });
+
+    return () => socket.disconnect();
+  }, []);
+
+  // 2. Derive Current Room Status
+  const currentRoom = useMemo(() => 
+    availableRooms.find(r => String(r.id) === String(selectedRoomId)),
+    [availableRooms, selectedRoomId]
+  );
+  const isRoomClosed = currentRoom && !currentRoom.is_available;
+
+  // 3. Fetch Inventory & CART AUTO-CORRECTION (Option B)
+  const fetchInv = useCallback(async () => {
+    if (!selectedRoomId || isRoomClosed) {
+      setInventory([]);
+      return; 
+    }
+
+    try {
+      const res = await listInventory({ room_id: selectedRoomId });
+      const borrowables = (res.data?.data?.items || []).filter(i => i.status === 'available').map(i => ({ ...i, kind: 'borrowable' }));
+      const consumables = (res.data?.data?.consumables || []).filter(i => i.quantity_available > 0).map(i => ({ ...i, kind: 'consumable' }));
+      const freshInventory = [...borrowables, ...consumables];
+      
+      setInventory(freshInventory);
+
+      // --- OPTION B: SILENT CART CROSS-CHECK ---
+      setCart(prevCart => {
+        let cartModified = false;
+        
+        const updatedCart = prevCart.map(cartItem => {
+          // Find the exact item in the newly fetched database data
+          const freshItem = freshInventory.find(i => i.inventory_type_id === cartItem.inventory_type_id && i.barcode === cartItem.barcode);
+          
+          if (!freshItem) {
+            // A unique item (like a specific Sieve barcode) was just issued to someone else!
+            cartModified = true;
+            toast.error(`⚠️ ${cartItem.name} was just issued to someone else. Removed from cart.`, { duration: 6000, icon: '🛑' });
+            return null; // Remove it
+          } 
+          
+          if (cartItem.kind === 'consumable' && cartItem.quantity > freshItem.quantity_available) {
+            // Someone borrowed a bunch of Nails, leaving less than the student wanted
+            cartModified = true;
+            toast.error(`⚠️ Only ${freshItem.quantity_available}x ${cartItem.name} left. Cart adjusted.`, { duration: 6000, icon: '📉' });
+            return { ...cartItem, quantity: freshItem.quantity_available }; // Lower their quantity
+          }
+          
+          return cartItem; // All good, keep it
+        }).filter(Boolean); // Clear out the nulls
+
+        return cartModified ? updatedCart : prevCart;
+      });
+
+    } catch (e) {
+      toast.error('Failed to load inventory');
+    }
+  }, [selectedRoomId, isRoomClosed]); // Notice `cart` is NOT a dependency to prevent infinite loops
+
+  // Fire fetch whenever room changes or socket triggers
+  useEffect(() => {
+    fetchInv();
+  }, [fetchInv, refreshTrigger]);
+
+  // 4. Snappy Search Filter
+  const filteredInventory = useMemo(() => {
+    const q = inventorySearch.trim().toLowerCase();
+    if (!q) return inventory;
+    return inventory.filter(item =>
+      item.name?.toLowerCase().includes(q) ||
+      item.barcode?.toLowerCase().includes(q)
+    );
+  }, [inventory, inventorySearch]);
+
+  // --- Handlers ---
+  const handleRoomChange = (e) => {
+    setSelectedRoomId(e.target.value);
+    setCart([]);
+    setInventorySearch('');
+  };
+
+  const addToCart = (item) => {
+    if (isRoomClosed) return; 
+    const exists = cart.find(i => i.inventory_type_id === item.inventory_type_id && i.barcode === item.barcode);
+    if (exists && item.kind === 'consumable') {
+      if (exists.quantity >= item.quantity_available) {
+         return toast.error(`Only ${item.quantity_available} available in stock.`);
+      }
+      setCart(cart.map(c => c.inventory_type_id === item.inventory_type_id ? { ...c, quantity: c.quantity + 1 } : c));
+    } else if (!exists) {
+      setCart([...cart, { ...item, quantity: 1, assigned_to: 'Requester' }]);
+    }
+    toast.success(`${item.name} added`);
+  };
+
+  const updateCart = (id, field, value) => setCart(cart.map(c => c.inventory_type_id === id ? { ...c, [field]: value } : c));
+  const removeFromCart = (id) => setCart(cart.filter(c => c.inventory_type_id !== id));
+
+  const addCompanion = () => setCompanions([...companions, { name: '', student_id: '', start_time: '', end_time: '' }]);
+  const updateCompanion = (index, field, value) => {
+    const newComps = [...companions];
+    newComps[index][field] = value;
+    setCompanions(newComps);
+  };
+
+  const handleSubmit = async () => {
+    if (isRoomClosed) return toast.error('This room is currently closed.');
+    if (!selectedRoomId) return toast.error('Please select a department room first');
+    if (cart.length === 0) return toast.error('Your cart is empty');
+    if (!purpose) return toast.error('Please enter a purpose for this request');
+
+    setSubmitting(true);
+    try {
+      const payload = {
+        room_id: selectedRoomId,
+        purpose,
+        items: cart.map(c => ({
+          inventory_type_id: c.inventory_type_id,
+          consumable_id: c.kind === 'consumable' ? c.item_id : null,
+          quantity: c.quantity,
+          assigned_to: c.assigned_to 
+        })),
+        companions: companions.filter(c => c.name && (!isFaculty ? c.student_id : true)).map(c => {
+          let start = null; let end = null;
+          if (isFaculty && scheduleType === 'today' && c.start_time && c.end_time) {
+            const today = new Date().toISOString().split('T')[0];
+            start = new Date(`${today}T${c.start_time}`).toISOString();
+            end = new Date(`${today}T${c.end_time}`).toISOString();
+          }
+          return { 
+            name: c.name, 
+            student_id: isFaculty ? (c.student_id || 'N/A') : c.student_id, 
+            start_time: start, 
+            end_time: end 
+          };
+        })
+      };
+
+      if (isFaculty) {
+        if (scheduleType === 'extended') {
+          if (!facultyExtendedDate) return toast.error("Select an extended return date");
+          payload.scheduled_time = new Date(facultyExtendedDate).toISOString();
+          payload.companions = []; 
+        } else {
+          if (!facultyTodayEnd) return toast.error("Select your base return time");
+          const today = new Date().toISOString().split('T')[0];
+          payload.scheduled_time = new Date(`${today}T${facultyTodayEnd}`).toISOString();
+        }
+      }
+
+      const res = await createRequest(payload);
+      setSuccessData(res.data.data || res.data);
+      toast.success(isFaculty ? 'Request submitted for approval!' : 'Request created!');
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Failed to submit request');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleFinalClose = () => {
+    setSuccessData(null);
+    setConfirmClose(false);
+    setCart([]);
+    setCompanions([]);
+    setPurpose('');
+    setScheduleType('today');
+    setFacultyExtendedDate('');
+    setFacultyTodayEnd('');
+    setInventorySearch('');
+    if (!initialRoom) setSelectedRoomId('');
+  };
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto space-y-6 relative">
+      <div>
+        <h1 className="text-2xl font-bold text-primary">New Equipment Request</h1>
+        <p className="text-sm text-muted">
+          {isFaculty ? 'Schedule your items. Requires admin approval.' : 'Walk-in request. Add items and proceed to the counter.'}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* --- LEFT COLUMN: DYNAMIC ROOM GUARD & INVENTORY --- */}
+        <NeumorphCard className="p-0 overflow-hidden flex flex-col h-[650px]">
+          
+          {/* Room Selector Header */}
+          <div className="p-4 bg-primary/5 border-b border-primary/10">
+            <label className="text-[10px] font-bold text-primary uppercase tracking-widest mb-2 block">Department Room</label>
+            <select 
+              className="neu-input w-full bg-white text-sm" 
+              value={selectedRoomId} 
+              onChange={handleRoomChange}
+              disabled={isFaculty && user.room_id} // Lock faculty to their own room
+            >
+              <option value="" disabled>-- Select Location --</option>
+              {availableRooms.map(room => (
+                <option key={room.id} value={room.id}>
+                  {room.is_available ? '🟢' : '🔴'} {room.name || room.code} 
+                  {room.is_available ? '' : ' (Unavailable)'}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex-1 flex flex-col p-4 relative bg-surface/50">
+            {isRoomClosed ? (
+              /* CLOSED ROOM GUARD UI */
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 animate-in fade-in zoom-in duration-300">
+                <div className="w-24 h-24 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                  <DoorClosed size={48} />
+                </div>
+                <h2 className="text-2xl font-bold text-gray-800">Room is Currently Closed</h2>
+                <div className="mt-4 p-4 bg-red-50 border border-red-100 rounded-2xl max-w-xs">
+                  <p className="text-xs font-bold text-red-600 uppercase tracking-widest mb-1">Admin Reason:</p>
+                  <p className="text-sm text-red-800 italic">"{currentRoom.unavailable_reason || 'No specific reason provided.'}"</p>
+                </div>
+                <p className="mt-6 text-xs text-muted leading-relaxed">
+                  Requests for this room are temporarily disabled.<br/> Please try again later or visit the counter for inquiries.
+                </p>
+              </div>
+            ) : !selectedRoomId ? (
+              /* NO ROOM SELECTED */
+              <div className="flex-1 flex flex-col items-center justify-center opacity-40 text-muted">
+                <MapPin size={64} strokeWidth={1} />
+                <p className="mt-4 font-medium">Select a department to view items</p>
+              </div>
+            ) : (
+              /* ACTIVE INVENTORY LIST */
+              <div className="flex flex-col h-full">
+                <div className="relative mb-4">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted group-focus-within:text-primary transition-colors" size={16} />
+                  <input 
+                    type="text"
+                    placeholder="Search by name or barcode..."
+                    className="neu-input w-full pl-10 py-3 bg-white text-sm"
+                    value={inventorySearch}
+                    onChange={(e) => setInventorySearch(e.target.value)}
+                  />
+                  {inventorySearch && (
+                    <button onClick={() => setInventorySearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-gray-700">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+                  {filteredInventory.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-muted text-center py-10">
+                      <Package size={48} className="mb-2 opacity-20" />
+                      <p className="text-sm italic">No items match "{inventorySearch}"</p>
+                    </div>
+                  ) : (
+                    filteredInventory.map(item => (
+                      <div 
+                        key={`${item.kind}-${item.inventory_type_id}-${item.barcode || item.item_id}`} 
+                        className="p-3 bg-white border border-black/5 rounded-2xl shadow-sm flex justify-between items-center hover:border-primary/30 hover:shadow-md transition-all duration-200 group animate-in fade-in"
+                      >
+                        <div className="flex-1 min-w-0 pr-4">
+                          <p className="font-bold text-gray-800 text-sm truncate group-hover:text-primary transition-colors">{item.name}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-widest ${item.kind === 'consumable' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+                              {item.kind}
+                            </span>
+                            <span className="text-[11px] text-muted font-mono truncate">
+                              {item.kind === 'consumable' ? `${item.quantity_available} left` : item.barcode}
+                            </span>
+                          </div>
+                        </div>
+                        <button onClick={() => addToCart(item)} className="neu-btn-sm p-2.5 text-primary hover:bg-primary hover:text-white transition-all rounded-xl">
+                          <Plus size={18} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </NeumorphCard>
+
+        {/* --- RIGHT COLUMN: CART & SUBMISSION --- */}
+        <div className={`space-y-6 h-[650px] overflow-y-auto pr-2 custom-scrollbar transition-opacity duration-300 ${isRoomClosed ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
+          
+          <NeumorphCard className="p-5 space-y-4">
+            <NeumorphInput label="Purpose / Activity" placeholder="e.g. Lab Experiment 101" value={purpose} onChange={e => setPurpose(e.target.value)} />
+            
+            {isFaculty && (
+              <div className="p-4 bg-primary/5 rounded-xl border border-primary/20 space-y-4">
+                <label className="text-[10px] font-bold text-primary uppercase tracking-widest flex items-center gap-1"><Calendar size={14}/> Schedule Type</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <input type="radio" checked={scheduleType === 'today'} onChange={() => setScheduleType('today')} /> Today (Short-Term)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <input type="radio" checked={scheduleType === 'extended'} onChange={() => setScheduleType('extended')} /> Extended Period
+                  </label>
+                </div>
+
+                {scheduleType === 'today' ? (
+                  <NeumorphInput label="My Return Time Today" type="time" value={facultyTodayEnd} onChange={e => setFacultyTodayEnd(e.target.value)} />
+                ) : (
+                  <NeumorphInput label="Return Date" type="date" value={facultyExtendedDate} onChange={e => setFacultyExtendedDate(e.target.value)} />
+                )}
+              </div>
+            )}
+          </NeumorphCard>
+
+          {(!isFaculty || (isFaculty && scheduleType === 'today')) && (
+            <NeumorphCard className="p-5 space-y-4">
+              <div className="flex justify-between items-center">
+                <label className="text-[10px] font-bold text-muted uppercase tracking-widest flex items-center gap-1"><Users size={14}/> Companions</label>
+                <button onClick={addCompanion} className="text-xs font-bold text-primary hover:underline">+ Add Person</button>
+              </div>
+              
+              {companions.map((comp, idx) => (
+                <div key={idx} className="grid grid-cols-2 gap-2 p-3 bg-black/5 rounded-xl relative mt-2 border border-black/5">
+                  <input placeholder="Full Name" className={`neu-input text-sm ${isFaculty ? 'col-span-2' : ''}`} value={comp.name} onChange={e => updateCompanion(idx, 'name', e.target.value)} />
+                  {!isFaculty && (
+                    <input placeholder="ID Number" className="neu-input text-sm" value={comp.student_id} onChange={e => updateCompanion(idx, 'student_id', e.target.value)} />
+                  )}
+                  {isFaculty && (
+                    <>
+                      <input type="time" placeholder="Start" className="neu-input text-sm" value={comp.start_time} onChange={e => updateCompanion(idx, 'start_time', e.target.value)} title="Handoff Start Time" />
+                      <input type="time" placeholder="End" className="neu-input text-sm" value={comp.end_time} onChange={e => updateCompanion(idx, 'end_time', e.target.value)} title="Handoff End Time" />
+                    </>
+                  )}
+                  <button onClick={() => setCompanions(companions.filter((_, i) => i !== idx))} className="absolute -top-2 -right-2 bg-red-100 text-red-600 rounded-full p-1.5 shadow-sm hover:bg-red-500 hover:text-white transition-colors"><Trash2 size={12}/></button>
+                </div>
+              ))}
+              {companions.length === 0 && <p className="text-xs text-muted italic">No companions added.</p>}
+            </NeumorphCard>
+          )}
+
+          <NeumorphCard className="p-5 flex flex-col">
+            <div className="flex justify-between items-end mb-4">
+              <h2 className="text-[10px] font-bold text-muted uppercase tracking-widest">Your Cart</h2>
+              <span className="text-xs font-bold text-primary">{cart.length} Items</span>
+            </div>
+            
+            <div className="space-y-3">
+              {cart.map(item => (
+                <div key={`${item.inventory_type_id}-${item.barcode || 'cons'}`} className="p-3 bg-white border border-black/10 shadow-sm rounded-xl space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-sm text-gray-800">{item.name}</span>
+                    <div className="flex items-center gap-2">
+                      {item.kind === 'consumable' && (
+                        <input type="number" min="1" max={item.quantity_available} className="neu-input w-16 text-center text-xs py-1" value={item.quantity} onChange={e => updateCart(item.inventory_type_id, 'quantity', parseInt(e.target.value) || 1)} />
+                      )}
+                      <button onClick={() => removeFromCart(item.inventory_type_id)} className="text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-colors"><Trash2 size={14}/></button>
+                    </div>
+                  </div>
+                  
+                  {companions.length > 0 && (
+                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-black/5">
+                      <span className="text-[10px] uppercase text-muted font-bold tracking-wider">Assign to:</span>
+                      <select className="neu-input flex-1 text-xs py-1.5 bg-black/[0.02]" value={item.assigned_to} onChange={e => updateCart(item.inventory_type_id, 'assigned_to', e.target.value)}>
+                        <option value="Requester">Myself (Primary Requester)</option>
+                        {companions.map((c, i) => c.name && <option key={i} value={c.name}>{c.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {cart.length === 0 && <div className="p-6 text-center text-muted border border-dashed border-black/10 rounded-2xl bg-black/[0.02]">Cart is empty</div>}
+            </div>
+            
+            <NeumorphButton variant="primary" className="w-full mt-6 py-4 font-bold text-sm tracking-wide" onClick={handleSubmit} loading={submitting} disabled={isRoomClosed || cart.length === 0}>
+              {isRoomClosed ? 'Room Unavailable' : 'Submit Request'} <ArrowRight size={16} className="ml-2" />
+            </NeumorphButton>
+          </NeumorphCard>
+
+        </div>
+      </div>
+
+      {/* --- KIOSK SUCCESS & QR MODAL --- */}
+      {successData && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="neu-card-lg w-full max-w-md bg-white text-center p-8 relative">
+            
+            {!confirmClose ? (
+              <>
+                <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle2 size={36} />
+                </div>
+                <h2 className="text-2xl font-bold text-gray-800 mb-1">Request Created!</h2>
+                <p className="text-sm text-muted mb-6 font-mono bg-black/5 inline-block px-3 py-1 rounded-full">#{successData.id}</p>
+
+                <div className="p-4 bg-black/5 rounded-2xl border-2 border-dashed border-black/10 inline-block mb-6 shadow-inner">
+                  <QRCodeSVG value={successData.qr_code} size={200} />
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl text-left mb-6">
+                  <p className="font-bold text-blue-800 text-sm mb-1 flex items-center gap-2">
+                    <AlertTriangle size={16} /> Important Instruction:
+                  </p>
+                  <p className="text-xs text-blue-700 leading-relaxed">
+                    Please <strong>take a photo or screenshot</strong> of this QR code right now. You will need to present this image at the Admin Counter to check your status and claim your items.
+                  </p>
+                </div>
+
+                <NeumorphButton variant="primary" className="w-full py-4 font-bold text-lg shadow-lg shadow-primary/20" onClick={() => setConfirmClose(true)}>
+                  I Have Captured the QR
+                </NeumorphButton>
+              </>
+            ) : (
+              <div className="py-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                <AlertTriangle size={48} className="text-amber-500 mx-auto mb-4" />
+                <h2 className="text-xl font-bold text-gray-800 mb-2">Are you absolutely sure?</h2>
+                <p className="text-sm text-muted mb-8 px-4">
+                  If you close this window without taking a photo, you will not be able to retrieve this QR code again and will have to make a new request.
+                </p>
+                
+                <div className="flex gap-4">
+                  <NeumorphButton variant="outline" className="flex-1" onClick={() => setConfirmClose(false)}>
+                    Go Back
+                  </NeumorphButton>
+                  <NeumorphButton variant="primary" className="flex-1 bg-red-500 hover:bg-red-600 text-white border-red-500 shadow-lg shadow-red-500/20" onClick={handleFinalClose}>
+                    Yes, Close It
+                  </NeumorphButton>
+                </div>
+              </div>
+            )}
+            
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

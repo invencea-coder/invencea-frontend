@@ -1,0 +1,324 @@
+/* ── Neumorphism Core ───────────────────────────────────────── */
+
+.neu-card {
+  border-radius: 16px;
+  background: #FDF5F5;
+  box-shadow: 8px 8px 16px #E8D5D5, -8px -8px 16px #FFFFFF;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.neu-card-sm {
+  border-radius: 10px;
+  background: #FDF5F5;
+  box-shadow: 4px 4px 8px #E8D5D5, -4px -4px 8px #FFFFFF;
+}
+
+.neu-card-lg {
+  border-radius: 24px;
+  background: #FDF5F5;
+  box-shadow: 12px 12px 24px #E8D5D5, -12px -12px 24px #FFFFFF;
+}
+
+.neu-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 10px 10px 20px #E8D5D5, -10px -10px 20px #FFFFFF;
+}
+
+.neu-inset {
+  border-radius: 16px;
+  background: #FDF5F5;
+  box-shadow: inset 6px 6px 12px #E8D5D5, inset -6px -6px 12px #FFFFFF;
+}
+
+.neu-btn {
+  border-radius: 10px;
+  background: #FDF5F5;
+  box-shadow: 5px 5px 10px #E8D5D5, -5px -5px 10px #FFFFFF;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  cursor: pointer;
+  border: none;
+  outline: none;
+}
+
+.neu-btn:hover {
+  box-shadow: 6px 6px 12px #E8D5D5, -6px -6px 12px #FFFFFF;
+}
+
+.neu-btn:active,
+.neu-btn-pressed {
+  box-shadow: inset 4px 4px 8px #E8D5D5, inset -4px -4px 8px #FFFFFF;
+  transform: scale(0.98);
+}
+
+.neu-btn-primary {
+  background: linear-gradient(135deg, #6B0000, #4A0000);
+  color: #FADADA;
+  box-shadow: 5px 5px 12px #C0A0A0, -2px -2px 6px #FFFFFF;
+}
+
+.neu-btn-primary:hover {
+  background: linear-gradient(135deg, #7A0000, #5A0000);
+  box-shadow: 6px 6px 14px #C0A0A0, -3px -3px 8px #FFFFFF;
+}
+
+.neu-btn-primary:active {
+  box-shadow: inset 4px 4px 8px #300000, inset -2px -2px 4px #7A0000;
+}
+
+.neu-input {
+  border-radius: 10px;
+  background: #FDF5F5;
+  box-shadow: inset 4px 4px 8px #E8D5D5, inset -4px -4px 8px #FFFFFF;
+  border: none;
+  outline: none;
+  transition: box-shadow 0.2s ease;
+  color: #4A0000;
+  padding: 0.625rem 1rem;
+  width: 100%;
+  font-family: 'DM Sans', sans-serif;
+}
+
+.neu-input:focus {
+  box-shadow: inset 5px 5px 10px #E0CCCC, inset -5px -5px 10px #FFFFFF,
+              0 0 0 2px rgba(74, 0, 0, 0.15);
+}
+
+.neu-input::placeholder { color: #C4A0A0; }
+
+/* ── Dark Mode (revised) ────────────────────────────────────────── */
+
+.dark .neu-card {
+  background: #4D1F1F;
+  box-shadow: 8px 8px 16px #351515, -8px -8px 16px #6A3030;
+}
+
+.dark .neu-card-sm {
+  background: #4D1F1F;
+  box-shadow: 4px 4px 8px #351515, -4px -4px 8px #6A3030;
+}
+
+.dark .neu-card-lg {
+  background: #4D1F1F;
+  box-shadow: 12px 12px 24px #351515, -12px -12px 24px #6A3030;
+}
+
+.dark .neu-card-hover:hover {
+  box-shadow: 10px 10px 20px #351515, -10px -10px 20px #6A3030;
+}
+
+.dark .neu-inset {
+  background: #4D1F1F;
+  box-shadow: inset 6px 6px 12px #351515, inset -6px -6px 12px #6A3030;
+}
+
+.dark .neu-btn {
+  background: #4D1F1F;
+  box-shadow: 5px 5px 10px #351515, -5px -5px 10px #6A3030;
+}
+
+.dark .neu-btn:hover {
+  box-shadow: 6px 6px 12px #351515, -6px -6px 12px #6A3030;
+}
+
+.dark .neu-btn:active {
+  box-shadow: inset 4px 4px 8px #351515, inset -4px -4px 8px #6A3030;
+}
+
+.dark .neu-input {
+  background: #4D1F1F;
+  box-shadow: inset 4px 4px 8px #351515, inset -4px -4px 8px #6A3030;
+  color: #FADADA;
+}
+
+.dark .neu-input:focus {
+  box-shadow: inset 5px 5px 10px #2D1111, inset -5px -5px 10px #6E3636,
+              0 0 0 2px rgba(250, 218, 218, 0.15);
+}
+
+.dark .neu-input::placeholder { color: #A06060; }
+
+/* ── Status Badges ──────────────────────────────────────────── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.badge-pending    { background: rgba(181, 69, 27, 0.12); color: #B5451B; }
+.badge-approved   { background: rgba(45, 106, 79, 0.12); color: #2D6A4F; }
+.badge-issued     { background: rgba(27, 75, 139, 0.12); color: #1B4B8B; }
+.badge-returned   { background: rgba(100, 100, 100, 0.12); color: #666; }
+.badge-rejected   { background: rgba(180, 0, 0, 0.12); color: #8B0000; }
+.badge-expired    { background: rgba(150, 150, 150, 0.1); color: #999; }
+
+.dark .badge-pending    { background: rgba(181, 69, 27, 0.25); color: #E8784A; }
+.dark .badge-approved   { background: rgba(45, 106, 79, 0.25); color: #4CAF80; }
+.dark .badge-issued     { background: rgba(27, 75, 139, 0.25); color: #6A9DDE; }
+.dark .badge-returned   { background: rgba(150, 150, 150, 0.2); color: #aaa; }
+.dark .badge-rejected   { background: rgba(180, 0, 0, 0.25); color: #E57373; }
+
+/* ── Sidebar ────────────────────────────────────────────────── */
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #7A3030;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.sidebar-link:hover {
+  background: rgba(74, 0, 0, 0.06);
+  color: #4A0000;
+}
+
+.sidebar-link.active {
+  background: #FDF5F5;
+  color: #4A0000;
+  box-shadow: 4px 4px 8px #E8D5D5, -4px -4px 8px #FFFFFF;
+}
+
+.dark .sidebar-link { color: #C08080; }
+.dark .sidebar-link:hover { background: rgba(250, 218, 218, 0.06); color: #FADADA; }
+.dark .sidebar-link.active {
+  background: #4D1F1F;
+  color: #FADADA;
+  box-shadow: 4px 4px 8px #351515, -4px -4px 8px #6A3030;
+}
+
+/* ── Table ──────────────────────────────────────────────────── */
+
+.neu-table { width: 100%; border-collapse: separate; border-spacing: 0 6px; }
+
+.neu-table thead th {
+  text-align: left;
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #C4A0A0;
+}
+
+.neu-table tbody tr {
+  background: #FDF5F5;
+  box-shadow: 3px 3px 6px #E8D5D5, -3px -3px 6px #FFFFFF;
+  border-radius: 10px;
+  transition: transform 0.15s ease;
+}
+
+.neu-table tbody tr:hover { transform: translateX(2px); }
+
+.neu-table tbody td {
+  padding: 10px 14px;
+  font-size: 13.5px;
+  vertical-align: middle;
+}
+
+.neu-table tbody td:first-child { border-radius: 10px 0 0 10px; }
+.neu-table tbody td:last-child  { border-radius: 0 10px 10px 0; }
+
+.dark .neu-table tbody tr {
+  background: #4D1F1F;
+  box-shadow: 3px 3px 6px #351515, -3px -3px 6px #6A3030;
+}
+
+/* ── OTP Input ──────────────────────────────────────────────── */
+
+.otp-input {
+  width: 48px;
+  height: 56px;
+  text-align: center;
+  font-size: 22px;
+  font-family: 'DM Mono', monospace;
+  font-weight: 500;
+  border-radius: 10px;
+  background: #FDF5F5;
+  box-shadow: inset 4px 4px 8px #E8D5D5, inset -4px -4px 8px #FFFFFF;
+  border: none;
+  outline: none;
+  color: #4A0000;
+  transition: box-shadow 0.2s;
+}
+
+.otp-input:focus {
+  box-shadow: inset 4px 4px 8px #E0CCCC, inset -4px -4px 8px #FFFFFF,
+              0 0 0 2px rgba(74, 0, 0, 0.2);
+}
+
+.dark .otp-input {
+  background: #4D1F1F;
+  box-shadow: inset 4px 4px 8px #351515, inset -4px -4px 8px #6A3030;
+  color: #FADADA;
+}
+
+/* ── Divider ────────────────────────────────────────────────── */
+
+.neu-divider {
+  border: none;
+  height: 1px;
+  background: linear-gradient(to right, transparent, #E8D5D5, transparent);
+  margin: 1rem 0;
+}
+
+.dark .neu-divider {
+  background: linear-gradient(to right, transparent, #6A3030, transparent);
+}
+
+/* ── Loading ────────────────────────────────────────────────── */
+
+.neu-spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid #E8D5D5;
+  border-top-color: #4A0000;
+  animation: spin 0.8s linear infinite;
+}
+
+.dark .neu-spinner {
+  border-color: #6A3030;
+  border-top-color: #FADADA;
+}
+
+/* ── Notification dot ───────────────────────────────────────── */
+
+.notif-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #B5451B;
+  animation: pulseSoft 1.5s ease-in-out infinite;
+}
+
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.6; transform: scale(0.85); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
