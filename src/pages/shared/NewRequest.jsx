@@ -7,13 +7,19 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
-import { io } from 'socket.io-client'; // <-- NEW: Socket import
+import { io } from 'socket.io-client';
 import api from '../../api/axiosClient';
 import { listInventory } from '../../api/inventoryAPI';
 import { createRequest } from '../../api/requestAPI';
 import NeumorphCard from '../../components/ui/NeumorphCard';
 import NeumorphButton from '../../components/ui/NeumorphButton';
 import NeumorphInput from '../../components/ui/NeumorphInput';
+
+// Derive the socket URL from the API base URL so it works in both
+// local dev (localhost:4000) and production (Render backend URL).
+// VITE_API_URL is e.g. "https://invenceabackend.onrender.com/api/v1"
+// so we strip "/api/v1" to get the bare server origin.
+const SOCKET_URL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:4000';
 
 export default function NewRequest() {
   const { user } = useAuth();
@@ -26,7 +32,7 @@ export default function NewRequest() {
   
   const [inventory, setInventory] = useState([]);
   const [inventorySearch, setInventorySearch] = useState('');
-  const [refreshTrigger, setRefreshTrigger] = useState(0); // Used to force inventory fetch
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   
   // --- Cart & Request State ---
   const [cart, setCart] = useState([]);
@@ -55,11 +61,9 @@ export default function NewRequest() {
     };
     fetchRooms();
 
-    // --- REAL-TIME SOCKET CONNECTION ---
-    const socketURL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:4000';
-    const socket = io(socketURL);
+    const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
 
-    // Listen for Room Lock/Unlock
+    // Listen for Room Lock/Unlock — updates the room list in real time
     socket.on('room-updated', (data) => {
       setAvailableRooms(prev => prev.map(room => 
         String(room.id) === String(data.roomId) 
@@ -68,9 +72,9 @@ export default function NewRequest() {
       ));
     });
 
-    // Listen for Inventory Deductions (Admin issued an item)
+    // Listen for Inventory Deductions
     socket.on('inventory-updated', () => {
-      setRefreshTrigger(prev => prev + 1); // Triggers the fetchInv useCallback below
+      setRefreshTrigger(prev => prev + 1);
     });
 
     return () => socket.disconnect();
@@ -83,7 +87,7 @@ export default function NewRequest() {
   );
   const isRoomClosed = currentRoom && !currentRoom.is_available;
 
-  // 3. Fetch Inventory & CART AUTO-CORRECTION (Option B)
+  // 3. Fetch Inventory & Cart Auto-Correction
   const fetchInv = useCallback(async () => {
     if (!selectedRoomId || isRoomClosed) {
       setInventory([]);
@@ -98,30 +102,26 @@ export default function NewRequest() {
       
       setInventory(freshInventory);
 
-      // --- OPTION B: SILENT CART CROSS-CHECK ---
       setCart(prevCart => {
         let cartModified = false;
         
         const updatedCart = prevCart.map(cartItem => {
-          // Find the exact item in the newly fetched database data
           const freshItem = freshInventory.find(i => i.inventory_type_id === cartItem.inventory_type_id && i.barcode === cartItem.barcode);
           
           if (!freshItem) {
-            // A unique item (like a specific Sieve barcode) was just issued to someone else!
             cartModified = true;
             toast.error(`⚠️ ${cartItem.name} was just issued to someone else. Removed from cart.`, { duration: 6000, icon: '🛑' });
-            return null; // Remove it
+            return null;
           } 
           
           if (cartItem.kind === 'consumable' && cartItem.quantity > freshItem.quantity_available) {
-            // Someone borrowed a bunch of Nails, leaving less than the student wanted
             cartModified = true;
             toast.error(`⚠️ Only ${freshItem.quantity_available}x ${cartItem.name} left. Cart adjusted.`, { duration: 6000, icon: '📉' });
-            return { ...cartItem, quantity: freshItem.quantity_available }; // Lower their quantity
+            return { ...cartItem, quantity: freshItem.quantity_available };
           }
           
-          return cartItem; // All good, keep it
-        }).filter(Boolean); // Clear out the nulls
+          return cartItem;
+        }).filter(Boolean);
 
         return cartModified ? updatedCart : prevCart;
       });
@@ -129,14 +129,13 @@ export default function NewRequest() {
     } catch (e) {
       toast.error('Failed to load inventory');
     }
-  }, [selectedRoomId, isRoomClosed]); // Notice `cart` is NOT a dependency to prevent infinite loops
+  }, [selectedRoomId, isRoomClosed]);
 
-  // Fire fetch whenever room changes or socket triggers
   useEffect(() => {
     fetchInv();
   }, [fetchInv, refreshTrigger]);
 
-  // 4. Snappy Search Filter
+  // 4. Search Filter
   const filteredInventory = useMemo(() => {
     const q = inventorySearch.trim().toLowerCase();
     if (!q) return inventory;
@@ -265,7 +264,7 @@ export default function NewRequest() {
               className="neu-input w-full bg-white text-sm" 
               value={selectedRoomId} 
               onChange={handleRoomChange}
-              disabled={isFaculty && user.room_id} // Lock faculty to their own room
+              disabled={isFaculty && user.room_id}
             >
               <option value="" disabled>-- Select Location --</option>
               {availableRooms.map(room => (
@@ -279,7 +278,6 @@ export default function NewRequest() {
 
           <div className="flex-1 flex flex-col p-4 relative bg-surface/50">
             {isRoomClosed ? (
-              /* CLOSED ROOM GUARD UI */
               <div className="flex-1 flex flex-col items-center justify-center text-center p-6 animate-in fade-in zoom-in duration-300">
                 <div className="w-24 h-24 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-6 shadow-inner">
                   <DoorClosed size={48} />
@@ -294,13 +292,11 @@ export default function NewRequest() {
                 </p>
               </div>
             ) : !selectedRoomId ? (
-              /* NO ROOM SELECTED */
               <div className="flex-1 flex flex-col items-center justify-center opacity-40 text-muted">
                 <MapPin size={64} strokeWidth={1} />
                 <p className="mt-4 font-medium">Select a department to view items</p>
               </div>
             ) : (
-              /* ACTIVE INVENTORY LIST */
               <div className="flex flex-col h-full">
                 <div className="relative mb-4">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted group-focus-within:text-primary transition-colors" size={16} />
