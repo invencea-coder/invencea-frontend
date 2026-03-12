@@ -28,45 +28,35 @@ export default function ManagerDashboard() {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Modal State
+  // Modal State - Added 'password' to the initial state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     role: 'faculty',
-    room_id: ''
+    room_id: '',
+    password: '' 
   });
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Fetch Stats and Users (We know these work for Managers)
       const statsRes = await api.get('/manager/stats');
       const usersRes = await api.get('/manager/users');
       
       setStats(statsRes.data?.data || statsRes.data);
       setSystemUsers(usersRes.data?.data || usersRes.data);
 
-      // 2. Fetch Rooms Safely
-      // 2. Fetch Rooms Safely
       try {
-        // Pointing strictly to your shared admin route
         const roomsRes = await api.get('/admin/rooms'); 
-        
-        // Let's log exactly what the backend gives us!
-        console.log("RAW ROOMS DATA:", roomsRes.data);
-
-        // Safely extract the array no matter how the backend wraps it
         const fetchedRooms = roomsRes.data?.data || roomsRes.data?.rooms || roomsRes.data || [];
-        
         setRooms(Array.isArray(fetchedRooms) ? fetchedRooms : []);
       } catch (roomErr) {
         console.error('Failed to fetch rooms for dropdown:', roomErr);
         toast.error('Could not load laboratory rooms');
         setRooms([]); 
       }
-
     } catch (err) {
       console.error('Failed to load manager data', err);
       toast.error('Failed to load system data');
@@ -81,15 +71,21 @@ export default function ManagerDashboard() {
 
   const handleProvisionUser = async () => {
     if (!formData.name || !formData.email) return toast.error('Name and Email are required');
-    if (formData.role === 'admin' && !formData.room_id) return toast.error('Admins must be assigned a room');
+    
+    // NEW: Validation for Admin roles
+    if (formData.role === 'admin') {
+      if (!formData.room_id) return toast.error('Admins must be assigned a room');
+      if (!formData.password || formData.password.length < 6) return toast.error('Admins require a password (min 6 characters)');
+    }
 
     setIsSubmitting(true);
     try {
       await api.post('/manager/users', formData);
-      toast.success(`${formData.role} account provisioned! Welcome email sent.`);
+      toast.success(`${formData.role} account provisioned!`);
       setIsModalOpen(false);
-      setFormData({ name: '', email: '', role: 'faculty', room_id: '' });
-      loadData(); // Refresh table
+      // Reset form including password
+      setFormData({ name: '', email: '', role: 'faculty', room_id: '', password: '' });
+      loadData(); 
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to provision user');
     } finally {
@@ -189,19 +185,30 @@ export default function ManagerDashboard() {
           
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-muted uppercase tracking-widest">System Role</label>
-            <select className="neu-input w-full bg-white text-sm" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value, room_id: ''})}>
+            <select className="neu-input w-full bg-white text-sm" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value, room_id: '', password: ''})}>
               <option value="faculty">Faculty Member (Request Items)</option>
               <option value="admin">Laboratory Admin (Manage Inventory)</option>
             </select>
           </div>
 
           {formData.role === 'admin' && (
-            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2">
-              <label className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">Assign to Laboratory Room</label>
-              <select className="neu-input w-full bg-amber-50 border-amber-200 text-sm" value={formData.room_id} onChange={e => setFormData({...formData, room_id: e.target.value})}>
-                <option value="" disabled>-- Select a Room --</option>
-                {rooms.map(r => <option key={r.id} value={r.id}>{r.name} ({r.code})</option>)}
-              </select>
+            <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">Assign to Laboratory Room</label>
+                <select className="neu-input w-full bg-amber-50 border-amber-200 text-sm" value={formData.room_id} onChange={e => setFormData({...formData, room_id: e.target.value})}>
+                  <option value="" disabled>-- Select a Room --</option>
+                  {rooms.map(r => <option key={r.id} value={r.id}>{r.name} ({r.code})</option>)}
+                </select>
+              </div>
+
+              {/* NEW: Password Field for Admins Only */}
+              <NeumorphInput 
+                label="Temporary Password" 
+                placeholder="Must be at least 6 characters" 
+                type="password" 
+                value={formData.password} 
+                onChange={e => setFormData({...formData, password: e.target.value})} 
+              />
             </div>
           )}
 
@@ -211,7 +218,6 @@ export default function ManagerDashboard() {
           </div>
         </div>
       </NeumorphModal>
-
     </div>
   );
 }
