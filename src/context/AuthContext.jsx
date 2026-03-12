@@ -19,7 +19,6 @@ export const AuthProvider = ({ children }) => {
 
   // --- Restore Session on Mount ---
   const restoreSession = useCallback(async () => {
-    // SECURE FIX: Switch to sessionStorage so closing the tab wipes the token
     const token = sessionStorage.getItem('invencea_token');
 
     if (!token) {
@@ -27,7 +26,6 @@ export const AuthProvider = ({ children }) => {
       return;
     }
 
-    // Attach token to all future API requests
     api.defaults.headers.common.Authorization = `Bearer ${token}`;
 
     try {
@@ -36,7 +34,6 @@ export const AuthProvider = ({ children }) => {
       setUser(userData);
     } catch (err) {
       console.error('Session restoration failed:', err);
-      // Clean up stale/invalid tokens securely
       sessionStorage.removeItem('invencea_token');
       delete api.defaults.headers.common.Authorization;
       setUser(null);
@@ -51,7 +48,6 @@ export const AuthProvider = ({ children }) => {
 
   // --- Login ---
   const login = useCallback(async (token, userData = null) => {
-    // SECURE FIX: Save to sessionStorage
     sessionStorage.setItem('invencea_token', token);
     api.defaults.headers.common.Authorization = `Bearer ${token}`;
 
@@ -79,7 +75,6 @@ export const AuthProvider = ({ children }) => {
     } catch (err) {
       console.error('Server logout failed, forcing local cleanup', err);
     } finally {
-      // ALWAYS clear local state securely
       sessionStorage.removeItem('invencea_token');
       delete api.defaults.headers.common.Authorization;
       setUser(null);
@@ -91,6 +86,22 @@ export const AuthProvider = ({ children }) => {
     setUser((prev) => ({ ...prev, ...newData }));
   }, []);
 
+  // --- Refresh User ---
+  // Re-fetches the current user from /auth/me and updates state.
+  // Called by ForceChangePasswordModal after a successful password reset
+  // so needs_password_reset flips to false and the modal closes.
+  const refreshUser = useCallback(async () => {
+    try {
+      const res = await api.get('/auth/me');
+      const userData = res.data?.data ?? res.data;
+      setUser(userData);
+      return userData;
+    } catch (err) {
+      console.error('Failed to refresh user:', err);
+      throw err;
+    }
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
@@ -99,6 +110,7 @@ export const AuthProvider = ({ children }) => {
         login,
         logout,
         updateUser,
+        refreshUser,
         isAuthenticated: !!user,
       }}
     >
