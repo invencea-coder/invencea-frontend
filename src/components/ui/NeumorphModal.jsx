@@ -12,13 +12,13 @@ export default function NeumorphModal({ open, onClose, title, children, width = 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
       style={{ background: 'rgba(74,0,0,0.25)', backdropFilter: 'blur(4px)' }}
       onClick={onClose}
     >
       <div
         className={`neu-card-lg w-full ${width} flex flex-col animate-slide-up`}
-        style={{ maxHeight: 'calc(100vh - 80px)' }}
+        style={{ maxHeight: 'calc(100dvh - 96px)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header — fixed, never scrolls away */}
