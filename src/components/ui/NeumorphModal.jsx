@@ -17,11 +17,12 @@ export default function NeumorphModal({ open, onClose, title, children, width = 
       onClick={onClose}
     >
       <div
-        className={`neu-card-lg w-full ${width} animate-slide-up`}
+        className={`neu-card-lg w-full ${width} flex flex-col animate-slide-up`}
+        style={{ maxHeight: 'calc(100vh - 80px)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-6 pb-4">
+        {/* Header — fixed, never scrolls away */}
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 flex-shrink-0">
           <h2 className="text-xl font-display font-semibold text-primary dark:text-darkText">
             {title}
           </h2>
@@ -32,8 +33,12 @@ export default function NeumorphModal({ open, onClose, title, children, width = 
             <X size={16} />
           </button>
         </div>
-        <hr className="neu-divider mx-6" />
-        <div className="px-6 pb-6 pt-2">{children}</div>
+        <hr className="neu-divider mx-6 flex-shrink-0" />
+
+        {/* Scrollable body */}
+        <div className="px-6 pb-6 pt-2 overflow-y-auto custom-scrollbar">
+          {children}
+        </div>
       </div>
     </div>
   );

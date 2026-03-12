@@ -108,7 +108,7 @@ export default function RetroactiveLogModal({ isOpen, onClose, onSuccess }) {
   return (
     <NeumorphModal open={isOpen} onClose={onClose} title="Blackout Recovery Log">
       {/* Scrollable container — caps height so it never overflows the viewport */}
-      <div className="max-h-[75vh] overflow-y-auto custom-scrollbar px-1">
+      <div>
         <div className="space-y-4 p-1">
 
           {/* Warning banner — compact */}
