@@ -49,18 +49,22 @@ export default function ManagerDashboard() {
       setSystemUsers(usersRes.data?.data || usersRes.data);
 
       // 2. Fetch Rooms Safely
+      // 2. Fetch Rooms Safely
       try {
-        // Change '/rooms' to whatever public/manager route your backend uses for rooms.
-        // It might be '/rooms', '/manager/rooms', or '/api/v1/rooms'
-        const roomsRes = await api.get('/rooms'); 
+        // Pointing strictly to your shared admin route
+        const roomsRes = await api.get('/admin/rooms'); 
         
-        const fetchedRooms = roomsRes.data?.data || roomsRes.data;
-        // Ensure it always sets an array so the .map() doesn't crash your dropdown
+        // Let's log exactly what the backend gives us!
+        console.log("RAW ROOMS DATA:", roomsRes.data);
+
+        // Safely extract the array no matter how the backend wraps it
+        const fetchedRooms = roomsRes.data?.data || roomsRes.data?.rooms || roomsRes.data || [];
+        
         setRooms(Array.isArray(fetchedRooms) ? fetchedRooms : []);
       } catch (roomErr) {
         console.error('Failed to fetch rooms for dropdown:', roomErr);
         toast.error('Could not load laboratory rooms');
-        setRooms([]); // Fallback to empty array
+        setRooms([]); 
       }
 
     } catch (err) {
