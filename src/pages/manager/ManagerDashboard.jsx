@@ -41,14 +41,28 @@ export default function ManagerDashboard() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [statsRes, usersRes, roomsRes] = await Promise.all([
-        api.get('/manager/stats'),
-        api.get('/manager/users'),
-        api.get('/admin/rooms') // Assuming this endpoint is accessible, or you can create /manager/rooms
-      ]);
+      // 1. Fetch Stats and Users (We know these work for Managers)
+      const statsRes = await api.get('/manager/stats');
+      const usersRes = await api.get('/manager/users');
+      
       setStats(statsRes.data?.data || statsRes.data);
       setSystemUsers(usersRes.data?.data || usersRes.data);
-      setRooms(roomsRes.data?.data || roomsRes.data);
+
+      // 2. Fetch Rooms Safely
+      try {
+        // Change '/rooms' to whatever public/manager route your backend uses for rooms.
+        // It might be '/rooms', '/manager/rooms', or '/api/v1/rooms'
+        const roomsRes = await api.get('/rooms'); 
+        
+        const fetchedRooms = roomsRes.data?.data || roomsRes.data;
+        // Ensure it always sets an array so the .map() doesn't crash your dropdown
+        setRooms(Array.isArray(fetchedRooms) ? fetchedRooms : []);
+      } catch (roomErr) {
+        console.error('Failed to fetch rooms for dropdown:', roomErr);
+        toast.error('Could not load laboratory rooms');
+        setRooms([]); // Fallback to empty array
+      }
+
     } catch (err) {
       console.error('Failed to load manager data', err);
       toast.error('Failed to load system data');
