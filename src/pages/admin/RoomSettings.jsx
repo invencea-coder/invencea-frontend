@@ -46,7 +46,8 @@ export default function RoomSettings() {
   const performToggle = async (room, reason) => {
     setToggling(room.id);
     try {
-      await api.put(`/admin/rooms/${room.id}/availability`, {
+      // Fixed: was /admin/rooms/:id/availability, correct path is /rooms/:id/availability
+      await api.put(`/rooms/${room.id}/availability`, {
         is_available: !room.is_available,
         reason: reason,
       });
