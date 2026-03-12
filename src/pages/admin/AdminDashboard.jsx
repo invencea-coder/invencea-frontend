@@ -42,17 +42,35 @@ const StatCard = ({ icon: Icon, label, value, color, sub, onClick }) => (
 const ROW_HEIGHT  = 57;
 const MAX_VISIBLE = 3;
 
+/**
+ * Returns a friendly first name from a full name string.
+ * Skips honorifics like Mr., Mrs., Ms., Dr., Prof. so the
+ * greeting shows the actual given name instead of the title.
+ */
+const HONORIFICS = new Set(['mr.', 'mrs.', 'ms.', 'miss', 'dr.', 'prof.', 'sr.', 'jr.']);
+
+function getFirstName(fullName) {
+  if (!fullName) return 'Admin';
+  const parts = fullName.trim().split(/\s+/);
+  // Walk through parts, skip any honorific tokens
+  for (const part of parts) {
+    if (!HONORIFICS.has(part.toLowerCase())) {
+      return part;
+    }
+  }
+  // Fallback: just use the last part if everything was honorifics somehow
+  return parts[parts.length - 1] || 'Admin';
+}
+
 export default function AdminDashboard() {
   const navigate    = useNavigate();
   const { user }    = useAuth();
-  const [stats, setStats]                   = useState(null);
-  const [recent, setRecent]                 = useState([]);
-  const [loading, setLoading]               = useState(true);
+  const [stats, setStats]                       = useState(null);
+  const [recent, setRecent]                     = useState([]);
+  const [loading, setLoading]                   = useState(true);
   const [isRetroModalOpen, setIsRetroModalOpen] = useState(false);
 
   // ── Password-reset gate ──────────────────────────────────────────────────
-  // Show the force-change modal whenever the user still has needs_password_reset=true.
-  // The modal calls refreshUser() on success which updates this value in context.
   const mustResetPassword = user?.needs_password_reset === true;
 
   // ── Data loading ─────────────────────────────────────────────────────────
@@ -88,8 +106,8 @@ export default function AdminDashboard() {
 
   // Schedule a silent reload at midnight
   useEffect(() => {
-    const now       = new Date();
-    const midnight  = new Date();
+    const now      = new Date();
+    const midnight = new Date();
     midnight.setHours(24, 0, 0, 0);
     const timer = setTimeout(() => loadDashboardData(true), midnight - now);
     return () => clearTimeout(timer);
@@ -126,7 +144,7 @@ export default function AdminDashboard() {
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-bold text-primary dark:text-darkText">
-            Welcome back, {user?.name?.split(' ')[0] || 'Admin'}!
+            Welcome back, {getFirstName(user?.name)}!
           </h1>
           <p className="text-sm text-muted dark:text-darkMuted mt-1">
             Here is your inventory overview for{' '}
@@ -147,10 +165,10 @@ export default function AdminDashboard() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={ClipboardList} label="Pending"       value={stats?.pending ?? 0}   color="text-yellow-600 dark:text-yellow-400" sub="Awaiting approval"   onClick={() => navigate('/admin/requests')} />
-        <StatCard icon={PackageCheck}  label="Active Borrows" value={stats?.active ?? 0}    color="text-green-600 dark:text-green-400"  sub="Currently issued"    onClick={() => navigate('/admin/return-scanner')} />
-        <StatCard icon={Clock}         label="Due Today"      value={stats?.due_today ?? 0} color="text-blue-600 dark:text-blue-400"    sub="Expected returns"    onClick={() => navigate('/admin/requests')} />
-        <StatCard icon={AlertTriangle} label="Low Stock"      value={stats?.low_stock ?? 0} color="text-red-600 dark:text-red-400"      sub="Consumables ≤ 5"     onClick={() => navigate('/admin/inventory')} />
+        <StatCard icon={ClipboardList} label="Pending"        value={stats?.pending ?? 0}   color="text-yellow-600 dark:text-yellow-400" sub="Awaiting approval"  onClick={() => navigate('/admin/requests')} />
+        <StatCard icon={PackageCheck}  label="Active Borrows" value={stats?.active ?? 0}    color="text-green-600 dark:text-green-400"  sub="Currently issued"   onClick={() => navigate('/admin/return-scanner')} />
+        <StatCard icon={Clock}         label="Due Today"      value={stats?.due_today ?? 0} color="text-blue-600 dark:text-blue-400"    sub="Expected returns"   onClick={() => navigate('/admin/requests')} />
+        <StatCard icon={AlertTriangle} label="Low Stock"      value={stats?.low_stock ?? 0} color="text-red-600 dark:text-red-400"      sub="Consumables ≤ 5"    onClick={() => navigate('/admin/inventory')} />
       </div>
 
       {/* Recent Requests */}
