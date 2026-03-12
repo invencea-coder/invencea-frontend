@@ -12,31 +12,19 @@ export default function RetroactiveLogModal({ isOpen, onClose, onSuccess }) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
 
-  // Requester type toggle
-  const [requesterType, setRequesterType] = useState('student'); // 'student' | 'faculty'
-
-  // Shared fields
+  const [requesterType, setRequesterType] = useState('student');
   const [fullName, setFullName] = useState('');
   const [purpose, setPurpose] = useState('Blackout Manual Log');
-
-  // Student-only
   const [studentId, setStudentId] = useState('');
-
-  // Faculty-only
-  const [facultyId, setFacultyId] = useState(''); // optional employee ID
-
-  // The 4 Timestamps
+  const [facultyId, setFacultyId] = useState('');
   const [requestedAt, setRequestedAt] = useState('');
   const [approvedAt, setApprovedAt]   = useState('');
   const [issuedAt, setIssuedAt]       = useState('');
   const [returnedAt, setReturnedAt]   = useState('');
-
-  // Barcode State
-  const [barcodes, setBarcodes]           = useState([]);
+  const [barcodes, setBarcodes]             = useState([]);
   const [currentBarcode, setCurrentBarcode] = useState('');
   const barcodeInputRef = useRef(null);
 
-  // Reset everything when modal opens/closes
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => document.getElementById('retro-student-id')?.focus(), 100);
@@ -55,13 +43,11 @@ export default function RetroactiveLogModal({ isOpen, onClose, onSuccess }) {
     }
   }, [isOpen]);
 
-  // Also reset ID fields when switching requester type
   useEffect(() => {
     setStudentId('');
     setFacultyId('');
   }, [requesterType]);
 
-  // Auto-fill Approved and Issued when Requested is chosen
   const handleRequestedTimeChange = (e) => {
     const time = e.target.value;
     setRequestedAt(time);
@@ -94,10 +80,9 @@ export default function RetroactiveLogModal({ isOpen, onClose, onSuccess }) {
     setLoading(true);
     try {
       const payload = {
-        // For faculty, student_id_number is their faculty/employee ID or 'N/A'
         student_id_number: requesterType === 'student' ? studentId : (facultyId || 'N/A'),
-        full_name:   fullName,
-        room_id:     user.room_id,
+        full_name:      fullName,
+        room_id:        user.room_id,
         purpose,
         barcodes,
         requester_type: requesterType,
@@ -108,7 +93,6 @@ export default function RetroactiveLogModal({ isOpen, onClose, onSuccess }) {
       };
 
       await api.post('/admin/requests/retroactive', payload);
-
       toast.success('Paper log successfully injected!');
       if (onSuccess) onSuccess();
       onClose();
@@ -123,124 +107,126 @@ export default function RetroactiveLogModal({ isOpen, onClose, onSuccess }) {
 
   return (
     <NeumorphModal open={isOpen} onClose={onClose} title="Blackout Recovery Log">
-      <div className="space-y-6 p-2">
+      {/* Scrollable container — caps height so it never overflows the viewport */}
+      <div className="max-h-[75vh] overflow-y-auto custom-scrollbar px-1">
+        <div className="space-y-4 p-1">
 
-        {/* Warning banner */}
-        <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-amber-800">
-          <ZapOff size={24} className="flex-shrink-0 mt-0.5" />
-          <p className="text-xs leading-relaxed">
-            <strong>Power Outage Recovery:</strong> Encode paper records. If the requester already returned the item, fill out "Returned At" to immediately close the request without affecting current stock.
-          </p>
-        </div>
-
-        {/* Requester Type Toggle */}
-        <div className="flex gap-2 p-1 bg-black/5 rounded-xl">
-          <button
-            onClick={() => setRequesterType('student')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all ${
-              !isFaculty
-                ? 'bg-white shadow text-primary'
-                : 'text-muted hover:text-gray-700'
-            }`}
-          >
-            <GraduationCap size={15} /> Student
-          </button>
-          <button
-            onClick={() => setRequesterType('faculty')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all ${
-              isFaculty
-                ? 'bg-white shadow text-primary'
-                : 'text-muted hover:text-gray-700'
-            }`}
-          >
-            <BookOpen size={15} /> Faculty
-          </button>
-        </div>
-
-        {/* Requester Info */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {!isFaculty ? (
-            <NeumorphInput
-              id="retro-student-id"
-              label="Student ID Number *"
-              placeholder="e.g. 2021-00710"
-              value={studentId}
-              onChange={e => setStudentId(e.target.value)}
-            />
-          ) : (
-            <NeumorphInput
-              id="retro-student-id"
-              label="Employee / Faculty ID (optional)"
-              placeholder="e.g. FAC-001"
-              value={facultyId}
-              onChange={e => setFacultyId(e.target.value)}
-            />
-          )}
-          <NeumorphInput
-            label={isFaculty ? 'Faculty Full Name *' : 'Student Full Name *'}
-            placeholder={isFaculty ? 'e.g. Prof. Maria Santos' : 'e.g. Juan Dela Cruz'}
-            value={fullName}
-            onChange={e => setFullName(e.target.value)}
-          />
-        </div>
-
-        {/* Timestamps Grid */}
-        <div className="p-4 bg-primary/5 rounded-2xl border border-primary/10">
-          <h3 className="text-[10px] font-bold text-primary uppercase tracking-widest mb-3">Historical Timeline</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <NeumorphInput label="Requested At *"  type="datetime-local" value={requestedAt} onChange={handleRequestedTimeChange}     className="w-full bg-white" />
-            <NeumorphInput label="Approved At *"   type="datetime-local" value={approvedAt}  onChange={e => setApprovedAt(e.target.value)}  className="w-full bg-white" />
-            <NeumorphInput label="Issued At *"     type="datetime-local" value={issuedAt}    onChange={e => setIssuedAt(e.target.value)}    className="w-full bg-white" />
-            <NeumorphInput label="Returned At (leave blank if still borrowed)" type="datetime-local" value={returnedAt} onChange={e => setReturnedAt(e.target.value)} className="w-full bg-white" />
+          {/* Warning banner — compact */}
+          <div className="bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg flex gap-2 text-amber-800">
+            <ZapOff size={16} className="flex-shrink-0 mt-0.5" />
+            <p className="text-[11px] leading-relaxed">
+              <strong>Power Outage Recovery:</strong> Encode paper records. Fill "Returned At" if the item was already returned to skip affecting stock.
+            </p>
           </div>
-        </div>
 
-        <NeumorphInput label="Purpose" value={purpose} onChange={e => setPurpose(e.target.value)} />
-
-        {/* Barcode Scanner Section */}
-        <div className="p-4 bg-black/5 rounded-2xl border border-black/5 space-y-4">
-          <div className="relative">
-            <Hash size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-            <input
-              ref={barcodeInputRef}
-              type="text"
-              placeholder="Scan barcode here and press Enter..."
-              className="neu-input w-full pl-9 text-sm bg-white"
-              value={currentBarcode}
-              onChange={e => setCurrentBarcode(e.target.value)}
-              onKeyDown={handleBarcodeKeyDown}
-            />
+          {/* Requester Type Toggle */}
+          <div className="flex gap-1.5 p-1 bg-black/5 rounded-xl">
             <button
-              onClick={() => handleBarcodeKeyDown({ key: 'Enter', preventDefault: () => {} })}
-              className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 bg-primary/10 text-primary text-xs font-bold rounded-lg hover:bg-primary hover:text-white transition-colors"
+              onClick={() => setRequesterType('student')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                !isFaculty ? 'bg-white shadow text-primary' : 'text-muted hover:text-gray-700'
+              }`}
             >
-              Add
+              <GraduationCap size={13} /> Student
+            </button>
+            <button
+              onClick={() => setRequesterType('faculty')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                isFaculty ? 'bg-white shadow text-primary' : 'text-muted hover:text-gray-700'
+              }`}
+            >
+              <BookOpen size={13} /> Faculty
             </button>
           </div>
 
-          <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar">
-            {barcodes.length === 0 ? (
-              <p className="text-center text-xs text-muted italic py-4">No barcodes scanned yet.</p>
+          {/* Requester Info — single row */}
+          <div className="grid grid-cols-2 gap-3">
+            {!isFaculty ? (
+              <NeumorphInput
+                id="retro-student-id"
+                label="Student ID *"
+                placeholder="2021-00710"
+                value={studentId}
+                onChange={e => setStudentId(e.target.value)}
+              />
             ) : (
-              barcodes.map((code, idx) => (
-                <div key={idx} className="flex justify-between items-center p-2.5 bg-white rounded-xl shadow-sm border border-black/5">
-                  <span className="font-mono text-sm text-gray-800">{code}</span>
-                  <button onClick={() => removeBarcode(idx)} className="text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-colors">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))
+              <NeumorphInput
+                id="retro-student-id"
+                label="Faculty ID (optional)"
+                placeholder="FAC-001"
+                value={facultyId}
+                onChange={e => setFacultyId(e.target.value)}
+              />
             )}
+            <NeumorphInput
+              label="Full Name *"
+              placeholder={isFaculty ? 'Prof. Maria Santos' : 'Juan Dela Cruz'}
+              value={fullName}
+              onChange={e => setFullName(e.target.value)}
+            />
           </div>
-        </div>
 
-        <div className="flex justify-end gap-3 pt-4 border-t border-black/5">
-          <NeumorphButton variant="outline" onClick={onClose} disabled={loading}>Cancel</NeumorphButton>
-          <NeumorphButton variant="primary" onClick={handleSubmit} loading={loading}>
-            <History size={16} className="mr-2" /> Inject Past Record
-          </NeumorphButton>
-        </div>
+          {/* Timestamps — 2x2 compact grid */}
+          <div className="p-3 bg-primary/5 rounded-xl border border-primary/10">
+            <p className="text-[9px] font-bold text-primary uppercase tracking-widest mb-2">Historical Timeline</p>
+            <div className="grid grid-cols-2 gap-2">
+              <NeumorphInput label="Requested At *" type="datetime-local" value={requestedAt} onChange={handleRequestedTimeChange} className="w-full bg-white" />
+              <NeumorphInput label="Approved At *"  type="datetime-local" value={approvedAt}  onChange={e => setApprovedAt(e.target.value)}  className="w-full bg-white" />
+              <NeumorphInput label="Issued At *"    type="datetime-local" value={issuedAt}    onChange={e => setIssuedAt(e.target.value)}    className="w-full bg-white" />
+              <NeumorphInput label="Returned At"    type="datetime-local" value={returnedAt}  onChange={e => setReturnedAt(e.target.value)}  className="w-full bg-white" />
+            </div>
+            <p className="text-[9px] text-muted mt-1.5 italic">Leave "Returned At" blank if item is still borrowed.</p>
+          </div>
 
+          {/* Purpose */}
+          <NeumorphInput label="Purpose" value={purpose} onChange={e => setPurpose(e.target.value)} />
+
+          {/* Barcode Scanner */}
+          <div className="p-3 bg-black/5 rounded-xl border border-black/5 space-y-2">
+            <div className="relative">
+              <Hash size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+              <input
+                ref={barcodeInputRef}
+                type="text"
+                placeholder="Scan barcode and press Enter..."
+                className="neu-input w-full pl-8 text-sm bg-white"
+                value={currentBarcode}
+                onChange={e => setCurrentBarcode(e.target.value)}
+                onKeyDown={handleBarcodeKeyDown}
+              />
+              <button
+                onClick={() => handleBarcodeKeyDown({ key: 'Enter', preventDefault: () => {} })}
+                className="absolute right-2 top-1/2 -translate-y-1/2 px-2.5 py-1 bg-primary/10 text-primary text-xs font-bold rounded-lg hover:bg-primary hover:text-white transition-colors"
+              >
+                Add
+              </button>
+            </div>
+
+            <div className="space-y-1.5 max-h-24 overflow-y-auto custom-scrollbar">
+              {barcodes.length === 0 ? (
+                <p className="text-center text-xs text-muted italic py-2">No barcodes scanned yet.</p>
+              ) : (
+                barcodes.map((code, idx) => (
+                  <div key={idx} className="flex justify-between items-center px-3 py-2 bg-white rounded-lg shadow-sm border border-black/5">
+                    <span className="font-mono text-sm text-gray-800">{code}</span>
+                    <button onClick={() => removeBarcode(idx)} className="text-red-500 hover:bg-red-50 p-1 rounded-lg transition-colors">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2 pt-2 border-t border-black/5">
+            <NeumorphButton variant="outline" onClick={onClose} disabled={loading}>Cancel</NeumorphButton>
+            <NeumorphButton variant="primary" onClick={handleSubmit} loading={loading}>
+              <History size={14} className="mr-1.5" /> Inject Past Record
+            </NeumorphButton>
+          </div>
+
+        </div>
       </div>
     </NeumorphModal>
   );
