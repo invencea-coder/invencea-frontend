@@ -1,25 +1,26 @@
-// src/pages/admin/AdminDashboard.jsx
+// frontend/src/pages/admin/AdminDashboard.jsx
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ClipboardList, PackageCheck, Clock, AlertTriangle,
-  ArrowRight, Loader2, History
+  ArrowRight, Loader2, History,
 } from 'lucide-react';
 import RetroactiveLogModal from '../../components/admin/RetroactiveLogModal';
+import ForceChangePasswordModal from '../../components/admin/ForceChangePasswordModal';
 import { io } from 'socket.io-client';
 import api from '../../api/axiosClient.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 
 const statusColors = {
-  'PENDING': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
-  'PENDING APPROVAL': 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  'APPROVED': 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-  'ISSUED': 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+  'PENDING':            'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
+  'PENDING APPROVAL':   'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+  'APPROVED':           'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  'ISSUED':             'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
   'PARTIALLY RETURNED': 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
-  'RETURNED': 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
-  'REJECTED': 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  'CANCELLED': 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  'EXPIRED': 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+  'RETURNED':           'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
+  'REJECTED':           'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  'CANCELLED':          'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  'EXPIRED':            'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
 };
 
 const StatCard = ({ icon: Icon, label, value, color, sub, onClick }) => (
@@ -38,18 +39,23 @@ const StatCard = ({ icon: Icon, label, value, color, sub, onClick }) => (
   </div>
 );
 
-// Row height ~57px, show 3 rows exactly, overflow scrolls smoothly
-const ROW_HEIGHT = 57;
+const ROW_HEIGHT  = 57;
 const MAX_VISIBLE = 3;
 
 export default function AdminDashboard() {
-  const navigate = useNavigate();
-  const { user } = useAuth();
-  const [stats, setStats] = useState(null);
-  const [recent, setRecent] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const navigate    = useNavigate();
+  const { user }    = useAuth();
+  const [stats, setStats]                   = useState(null);
+  const [recent, setRecent]                 = useState([]);
+  const [loading, setLoading]               = useState(true);
   const [isRetroModalOpen, setIsRetroModalOpen] = useState(false);
 
+  // ── Password-reset gate ──────────────────────────────────────────────────
+  // Show the force-change modal whenever the user still has needs_password_reset=true.
+  // The modal calls refreshUser() on success which updates this value in context.
+  const mustResetPassword = user?.needs_password_reset === true;
+
+  // ── Data loading ─────────────────────────────────────────────────────────
   const loadDashboardData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
@@ -59,7 +65,6 @@ export default function AdminDashboard() {
       ]);
       setStats(statsRes.data?.data ?? statsRes.data);
 
-      // Filter out records older than today (created before midnight today)
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
@@ -81,21 +86,16 @@ export default function AdminDashboard() {
     loadDashboardData();
   }, [loadDashboardData]);
 
-  // Schedule a silent reload at midnight to clear yesterday's rows
+  // Schedule a silent reload at midnight
   useEffect(() => {
-    const now = new Date();
-    const midnight = new Date();
-    midnight.setHours(24, 0, 0, 0); // next midnight
-    const msUntilMidnight = midnight - now;
-
-    const timer = setTimeout(() => {
-      loadDashboardData(true);
-    }, msUntilMidnight);
-
+    const now       = new Date();
+    const midnight  = new Date();
+    midnight.setHours(24, 0, 0, 0);
+    const timer = setTimeout(() => loadDashboardData(true), midnight - now);
     return () => clearTimeout(timer);
   }, [loadDashboardData]);
 
-  // Real-Time Socket Listeners
+  // Real-time socket listeners
   useEffect(() => {
     const socketURL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:4000';
     const socket = io(socketURL);
@@ -105,6 +105,7 @@ export default function AdminDashboard() {
     return () => socket.disconnect();
   }, [loadDashboardData]);
 
+  // ── Render ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -117,6 +118,9 @@ export default function AdminDashboard() {
 
   return (
     <div className="p-6 space-y-8 max-w-7xl mx-auto relative">
+
+      {/* Mandatory password-reset gate — blocks dashboard until resolved */}
+      {mustResetPassword && <ForceChangePasswordModal />}
 
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
@@ -186,7 +190,6 @@ export default function AdminDashboard() {
               </thead>
             </table>
 
-            {/* Scrollable body — locked to 3 rows, smooth scroll if more */}
             <div
               style={{
                 maxHeight: ROW_HEIGHT * MAX_VISIBLE,
@@ -228,7 +231,6 @@ export default function AdminDashboard() {
               </table>
             </div>
 
-            {/* Scroll hint */}
             {hasScroll && (
               <div className="px-6 py-2 border-t border-black/5 dark:border-white/5 bg-black/[0.01] text-center">
                 <p className="text-[10px] text-muted dark:text-darkMuted">
