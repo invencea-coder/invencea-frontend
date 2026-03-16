@@ -3,7 +3,12 @@ import { io } from 'socket.io-client';
 import toast from 'react-hot-toast';
 import { useAuth } from './useAuth.js';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:4000';
+// Safely grab the base backend URL by stripping '/api/v1' from your existing API variable
+const fallbackUrl = import.meta.env.VITE_API_URL 
+  ? import.meta.env.VITE_API_URL.replace('/api/v1', '') 
+  : 'http://localhost:4000';
+
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || fallbackUrl;
 
 let socket = null;
 
