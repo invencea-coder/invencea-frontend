@@ -19,7 +19,7 @@ import Inventory from './pages/admin/Inventory.jsx';
 import Requests from './pages/admin/Requests.jsx';
 import Reports from './pages/admin/Reports.jsx';
 import RoomSettings from './pages/admin/RoomSettings.jsx';
-import ReturnScanner from './pages/admin/ReturnScanner.jsx'; 
+import ReturnScanner from './pages/admin/ReturnScanner.jsx';
 
 // Faculty pages
 import FacultyDashboard from './pages/faculty/FacultyDashboard.jsx';
@@ -32,16 +32,17 @@ import StudentMyRequest from './pages/shared/MyRequest.jsx';
 // Shared pages
 import NewRequest from './pages/shared/NewRequest.jsx';
 
-// 🟢 NEW: Manager Pages
+// Manager pages
 import ManagerDashboard from './pages/manager/ManagerDashboard.jsx';
 
+// Kiosk pages
+import KioskStatus from './pages/kiosk/KioskStatus.jsx';
 
 // ── ProtectedRoute ──────────────────────────────────────────────
 const ProtectedRoute = ({ children, role }) => {
   const { user, loading } = useAuth();
 
   if (loading) return <SpinnerPage />;
-
   if (!user) return <Navigate to="/" replace />;
 
   if (role && user.role?.toLowerCase() !== role.toLowerCase()) {
@@ -51,14 +52,14 @@ const ProtectedRoute = ({ children, role }) => {
   return children;
 };
 
-// ── Spinner Component ───────────────────────────────────────────
+// ── Spinner ─────────────────────────────────────────────────────
 const SpinnerPage = () => (
   <div className="flex items-center justify-center h-screen bg-surface">
     <div className="neu-spinner" />
   </div>
 );
 
-// ── AppContent ────────────────────────────────────────────────
+// ── AppContent ───────────────────────────────────────────────────
 const AppContent = () => {
   const { user, loading } = useAuth();
 
@@ -66,17 +67,20 @@ const AppContent = () => {
 
   return (
     <Routes>
-      {/* Public Routes */}
+      {/* Public routes */}
       <Route
         path="/"
         element={user?.role ? <Navigate to={`/${user.role.toLowerCase()}`} replace /> : <LoginSelect />}
       />
-      <Route path="/login/admin" element={<AdminLogin />} />
-      <Route path="/login/faculty" element={<FacultyLogin />} />
-      <Route path="/login/faculty/otp" element={<OTPVerification />} />
-      <Route path="/login/student" element={<StudentLogin />} />
+      <Route path="/login/admin"        element={<AdminLogin />} />
+      <Route path="/login/faculty"      element={<FacultyLogin />} />
+      <Route path="/login/faculty/otp"  element={<OTPVerification />} />
+      <Route path="/login/student"      element={<StudentLogin />} />
 
-      {/* 🟢 NEW: Manager Routes */}
+      {/* Kiosk Status — public, no login required */}
+      <Route path="/kiosk/status" element={<KioskStatus />} />
+
+      {/* Manager routes */}
       <Route
         path="/manager/*"
         element={
@@ -88,7 +92,7 @@ const AppContent = () => {
         <Route index element={<ManagerDashboard />} />
       </Route>
 
-      {/* Admin Routes */}
+      {/* Admin routes */}
       <Route
         path="/admin/*"
         element={
@@ -98,14 +102,14 @@ const AppContent = () => {
         }
       >
         <Route index element={<AdminDashboard />} />
-        <Route path="inventory" element={<Inventory />} />
-        <Route path="requests" element={<Requests />} />
-        <Route path="return-scanner" element={<ReturnScanner />} /> 
-        <Route path="reports" element={<Reports />} />
-        <Route path="rooms" element={<RoomSettings />} />
+        <Route path="inventory"      element={<Inventory />} />
+        <Route path="requests"       element={<Requests />} />
+        <Route path="return-scanner" element={<ReturnScanner />} />
+        <Route path="reports"        element={<Reports />} />
+        <Route path="rooms"          element={<RoomSettings />} />
       </Route>
 
-      {/* Faculty Routes */}
+      {/* Faculty routes */}
       <Route
         path="/faculty/*"
         element={
@@ -115,11 +119,11 @@ const AppContent = () => {
         }
       >
         <Route index element={<FacultyDashboard />} />
-        <Route path="new-request" element={<NewRequest />} />
-        <Route path="my-requests" element={<FacultyMyRequest />} />
+        <Route path="new-request"  element={<NewRequest />} />
+        <Route path="my-requests"  element={<FacultyMyRequest />} />
       </Route>
 
-      {/* Student Routes */}
+      {/* Student routes */}
       <Route
         path="/student/*"
         element={
@@ -129,8 +133,8 @@ const AppContent = () => {
         }
       >
         <Route index element={<StudentDashboard />} />
-        <Route path="new-request" element={<NewRequest />} />
-        <Route path="my-requests" element={<StudentMyRequest />} />
+        <Route path="new-request"  element={<NewRequest />} />
+        <Route path="my-requests"  element={<StudentMyRequest />} />
       </Route>
 
       {/* Fallback */}
@@ -139,7 +143,7 @@ const AppContent = () => {
   );
 };
 
-// ── Main App ───────────────────────────────────────────────
+// ── Main App ─────────────────────────────────────────────────────
 export default function App() {
   return (
     <BrowserRouter>
