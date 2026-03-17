@@ -1,7 +1,7 @@
 // src/pages/admin/Inventory.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { Search, Plus, Filter, Package, BookOpen, Cpu, Settings, Trash2, Edit2 } from 'lucide-react';
+import { Search, Plus, Filter, Package, BookOpen, Cpu, Settings, Trash2, Edit2, Archive } from 'lucide-react';
 import toast from 'react-hot-toast';
 import NeumorphCard from '../../components/ui/NeumorphCard.jsx';
 import NeumorphButton from '../../components/ui/NeumorphButton.jsx';
@@ -16,6 +16,7 @@ export default function Inventory() {
   
   // UI State
   const [searchQuery, setSearchQuery] = useState('');
+  const [showArchived, setShowArchived] = useState(false); // <-- NEW: Archive Toggle State
   const [showModal, setShowModal] = useState(false);
   const [isEdit, setIsEdit] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -91,8 +92,15 @@ export default function Inventory() {
   // --- Dynamic Filtering & Sorting ---
   const filteredAndSortedItems = useMemo(() => {
     let result = items;
-    const q = searchQuery.toLowerCase();
 
+    // 1. Archive vs Active Filter (NEW)
+    result = result.filter(item => {
+      if (showArchived) return item.status === 'archived';
+      return item.status !== 'archived';
+    });
+
+    // 2. Search Filter
+    const q = searchQuery.toLowerCase();
     if (q) {
       result = result.filter(item => {
         if (Number(user?.room_id) === 3) {
@@ -105,6 +113,7 @@ export default function Inventory() {
       });
     }
 
+    // 3. Sorting
     result.sort((a, b) => {
       if (Number(user?.room_id) === 3) {
         return parseInt(b.type_metadata?.year || 0) - parseInt(a.type_metadata?.year || 0);
@@ -115,7 +124,7 @@ export default function Inventory() {
     });
 
     return result;
-  }, [items, searchQuery, user?.room_id]);
+  }, [items, searchQuery, user?.room_id, showArchived]);
 
   // --- Modal Handlers ---
   const openAddModal = () => {
@@ -195,7 +204,7 @@ export default function Inventory() {
     if (!window.confirm('Are you sure you want to delete this item?')) return;
     try {
       await deleteInventoryItem(id, kind);
-      toast.success('Item deleted');
+      toast.success('Item moved to Archive Bin');
       loadData();
     } catch (e) {
       toast.error('Failed to delete item');
@@ -219,6 +228,7 @@ export default function Inventory() {
       case 'borrowed': return 'bg-blue-100 text-blue-700';
       case 'unavailable': return 'bg-red-100 text-red-700';
       case 'reserved': return 'bg-purple-100 text-purple-700';
+      case 'archived': return 'bg-gray-800 text-gray-200'; // Added color for archived tag
       default: return 'bg-gray-100 text-gray-700';
     }
   };
@@ -244,6 +254,17 @@ export default function Inventory() {
       {/* Toolbar */}
       <NeumorphCard className="p-4 flex gap-4">
         <NeumorphInput icon={<Search size={16} />} placeholder={roomConfig.searchPlaceholder} value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="flex-1" />
+        
+        {/* NEW: Archive Toggle Button */}
+        <NeumorphButton 
+          variant={showArchived ? "primary" : "outline"} 
+          className="px-4 transition-all" 
+          onClick={() => setShowArchived(!showArchived)}
+        >
+          <Archive size={16} className={showArchived ? "mr-2" : ""} />
+          {showArchived && "Viewing Archive"}
+        </NeumorphButton>
+
         <NeumorphButton variant="outline" className="px-4"><Filter size={16} /></NeumorphButton>
       </NeumorphCard>
 
@@ -252,7 +273,9 @@ export default function Inventory() {
         {loading ? (
           <div className="flex justify-center py-10"><div className="neu-spinner" /></div>
         ) : filteredAndSortedItems.length === 0 ? (
-          <div className="p-10 text-center text-muted">No items found matching your criteria.</div>
+          <div className="p-10 text-center text-muted">
+            {showArchived ? "Archive bin is empty." : "No items found matching your criteria."}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
@@ -263,7 +286,7 @@ export default function Inventory() {
               </thead>
               <tbody className="divide-y divide-black/5">
                 {filteredAndSortedItems.map(item => (
-                  <tr key={`${item.kind}-${item.item_id}`} className="hover:bg-black/[0.02] transition-colors">
+                  <tr key={`${item.kind}-${item.item_id}`} className={`hover:bg-black/[0.02] transition-colors ${item.status === 'archived' ? 'opacity-70 bg-gray-50' : ''}`}>
                     <td className="px-6 py-4 font-mono font-medium text-xs">{item.barcode}</td>
                     
                     {Number(user?.room_id) === 3 ? (
@@ -320,12 +343,14 @@ export default function Inventory() {
 
                     {/* Actions */}
                     <td className="px-6 py-4 flex items-center gap-1">
-                      <button onClick={() => openEditModal(item)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors">
+                      <button onClick={() => openEditModal(item)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="Edit / Restore">
                         <Edit2 size={16} />
                       </button>
-                      <button onClick={() => handleDelete(item.item_id, item.kind)} className="p-2 text-muted hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                        <Trash2 size={16} />
-                      </button>
+                      {!showArchived && (
+                        <button onClick={() => handleDelete(item.item_id, item.kind)} className="p-2 text-muted hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Move to Archive">
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -349,6 +374,7 @@ export default function Inventory() {
                   <option value="available">Available (Visible to Students)</option>
                   <option value="unavailable">Unavailable (Hidden)</option>
                   <option value="reserved">Reserved (Hidden)</option>
+                  <option value="archived">Archived (Bin)</option>
                   {form.status === 'borrowed' && <option value="borrowed" disabled>Currently Borrowed</option>}
                 </select>
               </div>
