@@ -39,16 +39,15 @@ function QrCameraScanner({ onResult }) {
     const timer = setTimeout(async () => {
       if (!isMountedRef.current || !containerRef.current) return;
       let cameras;
-      try {
-        cameras = await Html5Qrcode.getCameras();
-      } catch {
-        if (isMountedRef.current) toast.error('Could not access camera. Please allow camera permissions.');
-        return;
-      }
-      if (!cameras || cameras.length === 0) {
-        if (isMountedRef.current) toast.error('No cameras found on this device.');
-        return;
-      }
+try {
+  cameras = await Html5Qrcode.getCameras().catch(() => []);
+} catch {
+  cameras = [];
+}
+if (!cameras || cameras.length === 0) {
+  if (isMountedRef.current) toast.error('Could not access camera. Please allow camera permissions.');
+  return;
+}
       if (!isMountedRef.current || !containerRef.current) return;
       const camera = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[0];
       const scanner = new Html5Qrcode('qr-reader-cam');
@@ -197,14 +196,26 @@ export default function AdminRequests() {
   };
 
   const openIssueModal = (req) => {
-    setSelectedRequest(req);
-    setAdjustedItems(req.items.map((i, idx) => {
-      let assignee = i.assigned_to || i.assignTo || 'Requester';
-      if (assignee === 'Shared Group' || assignee === 'Shared') assignee = 'Requester';
-      return { ...i, id: i.id || `temp-${idx}`, actualQuantity: i.quantity, assignTo: assignee, scannedPhysicalItems: [] };
-    }));
-    setIssueModal(true);
-  };
+  setSelectedRequest(req);
+  setAdjustedItems(req.items.map((i, idx) => {
+    let assignee = i.assigned_to || i.assignTo || 'Requester';
+    if (assignee === 'Shared Group' || assignee === 'Shared') assignee = 'Requester';
+
+    // Quantity-mode: item has stock_id set
+    const isQtyMode = !!i.stock_id;
+
+    return {
+      ...i,
+      id: i.id || `temp-${idx}`,
+      // For qty-mode, use qty_requested; for unit-mode, use quantity
+      actualQuantity: isQtyMode ? (i.qty_requested || i.quantity || 1) : (i.quantity || 1),
+      assignTo: assignee,
+      scannedPhysicalItems: [],
+      isQtyMode,
+    };
+  }));
+  setIssueModal(true);
+};
 
   // ─── FIX 1 & 4: Correct QR scan flows ────────────────────────────────────────
   // STUDENT: approve first (no item reserve) → reload → open issue modal
@@ -266,38 +277,45 @@ export default function AdminRequests() {
   }, []);
 
   const handleItemScan = (barcode) => {
-    // Read from inventoryRef.current (not the `inventory` state) — this function
-    // is called inside the keydown listener which is registered once at mount.
-    // Without the ref, it would forever see the empty inventory from first render.
-    const norm = (b) => String(b ?? '').trim().replace(/^0+(\d)/, '$1');
-    const invItem = inventoryRef.current.find(i => norm(i.barcode) === norm(barcode));
-    if (!invItem) { toast.error(`Barcode ${barcode} not found in this room.`); return; }
-    if (invItem.kind === 'consumable') { toast.success(`${invItem.name} verified.`); return; }
+  const norm = (b) => String(b ?? '').trim().replace(/^0+(\d)/, '$1');
+  const invItem = inventoryRef.current.find(i => norm(i.barcode) === norm(barcode));
 
-    setAdjustedItems(prev => {
-      const newItems = [...prev];
-      const alreadyScanned = newItems.some(item => item.scannedPhysicalItems?.some(spi => spi.id === invItem.id));
-      if (alreadyScanned) { toast.error('Already scanned this unit!'); return prev; }
+  if (!invItem) { toast.error(`Barcode ${barcode} not found in this room.`); return; }
 
-      const matchIndex = newItems.findIndex(item =>
-        String(item.inventory_type_id) === String(invItem.inventory_type_id) &&
-        (item.scannedPhysicalItems?.length || 0) < item.actualQuantity
-      );
+  // Quantity-mode items are identified by inventory_mode on the inventory row.
+  // They don't need individual barcode scanning.
+  if (invItem.inventory_mode === 'quantity' || invItem.kind === 'quantity') {
+    toast(`${invItem.name} is qty-mode. Adjust quantity manually.`, { icon: 'ℹ️' }); return;
+  }
 
-      if (matchIndex >= 0) {
-        const matched = newItems[matchIndex];
-        newItems[matchIndex] = { ...matched, scannedPhysicalItems: [...(matched.scannedPhysicalItems || []), invItem] };
-        toast.success(`Matched: ${invItem.barcode}`);
-      } else {
-        newItems.push({
-          id: `new-${Date.now()}`, item_name: invItem.name, inventory_type_id: invItem.inventory_type_id,
-          consumable_id: null, quantity: 1, actualQuantity: 1, isNew: true, assignTo: 'Requester', scannedPhysicalItems: [invItem]
-        });
-        toast.success(`Added extra: ${invItem.name}`);
-      }
-      return newItems;
-    });
-  };
+  if (invItem.kind === 'consumable') { toast.success(`${invItem.name} verified.`); return; }
+
+  setAdjustedItems(prev => {
+    const newItems = [...prev];
+    const alreadyScanned = newItems.some(item => item.scannedPhysicalItems?.some(spi => spi.id === invItem.id));
+    if (alreadyScanned) { toast.error('Already scanned this unit!'); return prev; }
+
+    const matchIndex = newItems.findIndex(item =>
+      !item.isQtyMode &&                                    // never match qty-mode rows
+      String(item.inventory_type_id) === String(invItem.inventory_type_id) &&
+      (item.scannedPhysicalItems?.length || 0) < item.actualQuantity
+    );
+
+    if (matchIndex >= 0) {
+      const matched = newItems[matchIndex];
+      newItems[matchIndex] = { ...matched, scannedPhysicalItems: [...(matched.scannedPhysicalItems || []), invItem] };
+      toast.success(`Matched: ${invItem.barcode}`);
+    } else {
+      newItems.push({
+        id: `new-${Date.now()}`, item_name: invItem.name, inventory_type_id: invItem.inventory_type_id,
+        consumable_id: null, quantity: 1, actualQuantity: 1, isNew: true, assignTo: 'Requester',
+        scannedPhysicalItems: [invItem], isQtyMode: false,
+      });
+      toast.success(`Added extra: ${invItem.name}`);
+    }
+    return newItems;
+  });
+};
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -358,33 +376,61 @@ export default function AdminRequests() {
   };
 
   const isReadyToIssue = adjustedItems.length > 0 && adjustedItems.every(item => {
-    if (item.actualQuantity <= 0) return true;
-    if (item.consumable_id) return true;
-    return (item.scannedPhysicalItems?.length || 0) === item.actualQuantity;
-  });
+  if (item.actualQuantity <= 0) return true;
+  if (item.consumable_id) return true;
+  if (item.isQtyMode) return true;                 // ← qty-mode: no scan needed
+  return (item.scannedPhysicalItems?.length || 0) === item.actualQuantity;
+});
+
 
   const handleIssue = async () => {
     if (!selectedRequest) return;
     setIssuing(true);
     try {
       const payloadItems = [];
-      adjustedItems.forEach(item => {
-        if (item.actualQuantity <= 0) { payloadItems.push({ id: item.id, quantity: 0 }); return; }
-        const scanned = item.scannedPhysicalItems || [];
-        if (!item.consumable_id) {
-          scanned.forEach(spi => payloadItems.push({
-            id: item.isNew || String(item.id).startsWith('split-') ? null : item.id,
-            inventory_type_id: item.inventory_type_id, consumable_id: null,
-            quantity: 1, inventory_item_id: spi.id, assigned_to: item.assignTo
-          }));
-        } else {
-          payloadItems.push({
-            id: item.isNew || String(item.id).startsWith('split-') ? null : item.id,
-            inventory_type_id: item.inventory_type_id, consumable_id: item.consumable_id,
-            quantity: item.actualQuantity, assigned_to: item.assignTo
-          });
-        }
-      });
+adjustedItems.forEach(item => {
+  if (item.actualQuantity <= 0) {
+    payloadItems.push({ id: item.id, quantity: 0 });
+    return;
+  }
+
+  // ── Quantity-mode stock item ──────────────────────────────────────────────
+  if (item.isQtyMode) {
+    payloadItems.push({
+      id: item.isNew ? null : item.id,
+      inventory_type_id: item.inventory_type_id,
+      stock_id: item.stock_id,
+      qty_requested: item.actualQuantity,
+      quantity: item.actualQuantity,        // keep for backward compat
+      assigned_to: item.assignTo,
+    });
+    return;
+  }
+
+  const scanned = item.scannedPhysicalItems || [];
+
+  // ── Unit-mode borrowable ──────────────────────────────────────────────────
+  if (!item.consumable_id) {
+    scanned.forEach(spi => payloadItems.push({
+      id: item.isNew || String(item.id).startsWith('split-') ? null : item.id,
+      inventory_type_id: item.inventory_type_id,
+      consumable_id: null,
+      quantity: 1,
+      inventory_item_id: spi.id,
+      assigned_to: item.assignTo,
+    }));
+    return;
+  }
+
+  // ── Consumable ────────────────────────────────────────────────────────────
+  payloadItems.push({
+    id: item.isNew || String(item.id).startsWith('split-') ? null : item.id,
+    inventory_type_id: item.inventory_type_id,
+    consumable_id: item.consumable_id,
+    quantity: item.actualQuantity,
+    assigned_to: item.assignTo,
+  });
+});
       await issueRequest(selectedRequest.id, payloadItems);
       toast.success('Request issued successfully!');
       setIssueModal(false);
@@ -627,83 +673,172 @@ export default function AdminRequests() {
             <label className="text-xs font-bold text-muted uppercase mb-2 block">Review & Verify</label>
             <div className="space-y-4">
               {adjustedItems.map((item, index) => {
-                const validInventory = inventory.filter(inv => String(inv.inventory_type_id) === String(item.inventory_type_id));
-                const isSatisfied = item.actualQuantity > 0 &&
-                  (item.consumable_id ? true : item.actualQuantity === (item.scannedPhysicalItems?.length || 0));
+                const validInventory = inventory.filter(inv =>
+                  String(inv.inventory_type_id) === String(item.inventory_type_id) &&
+                  !item.isQtyMode  // qty-mode items have no individual unit rows in inventory
+                );
+
+                // isSatisfied logic:
+                // - qty=0: always satisfied (will be cancelled)
+                // - consumable: always satisfied (no scan)
+                // - qty-mode: always satisfied (no scan)
+                // - unit borrowable: must have scanned all units
+                const isSatisfied = item.actualQuantity <= 0
+                  || !!item.consumable_id
+                  || !!item.isQtyMode
+                  || item.actualQuantity === (item.scannedPhysicalItems?.length || 0);
 
                 return (
-                  <div key={item.id}
+                  <div
+                    key={item.id}
                     className={`p-4 rounded-2xl border shadow-sm flex flex-col gap-3 transition-colors ${
                       isSatisfied ? 'bg-green-50/50 border-green-200' : 'bg-white border-black/10'
-                    }`}>
+                    }`}
+                  >
+                    {/* ── Top row: name + qty stepper ── */}
                     <div className="flex justify-between gap-3">
                       <div className="flex-1">
                         <span className="text-sm font-bold block">
                           {item.item_name}
-                          {item.isNew && <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded uppercase ml-1">Added</span>}
+                          {item.isNew && (
+                            <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded uppercase ml-1">Added</span>
+                          )}
+                          {item.isQtyMode && (
+                            <span className="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded uppercase ml-1 inline-flex items-center gap-0.5">
+                              ⊞ qty
+                            </span>
+                          )}
                         </span>
 
-                        {!item.consumable_id && item.actualQuantity > 0 && (
+                        {/* ── Unit-mode: show available barcodes ── */}
+                        {!item.consumable_id && !item.isQtyMode && item.actualQuantity > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1.5 items-center">
-                            <span className="text-[10px] text-muted font-bold uppercase tracking-wider">Available Barcodes:</span>
-                            {validInventory.length > 0 ? validInventory.map(inv => {
-                              const isScanned = item.scannedPhysicalItems?.some(spi => spi.id === inv.id);
-                              return (
-                                <span key={inv.id} className={`text-[10px] font-mono px-1.5 py-0.5 rounded transition-all ${
-                                  isScanned ? 'bg-green-100 text-green-700 line-through opacity-50' : 'bg-black/5 text-gray-700'
-                                }`}>{String(inv.barcode)}</span>
-                              );
-                            }) : (
-                              <span className="text-[10px] text-red-500 font-bold bg-red-50 px-1.5 py-0.5 rounded">Out of Stock</span>
+                            <span className="text-[10px] text-muted font-bold uppercase tracking-wider">
+                              Available Barcodes:
+                            </span>
+                            {validInventory.length > 0 ? (
+                              validInventory.map(inv => {
+                                const isScanned = item.scannedPhysicalItems?.some(spi => spi.id === inv.id);
+                                return (
+                                  <span
+                                    key={inv.id}
+                                    className={`text-[10px] font-mono px-1.5 py-0.5 rounded transition-all ${
+                                      isScanned
+                                        ? 'bg-green-100 text-green-700 line-through opacity-50'
+                                        : 'bg-black/5 text-gray-700'
+                                    }`}
+                                  >
+                                    {String(inv.barcode)}
+                                  </span>
+                                );
+                              })
+                            ) : (
+                              <span className="text-[10px] text-red-500 font-bold bg-red-50 px-1.5 py-0.5 rounded">
+                                Out of Stock
+                              </span>
                             )}
                           </div>
                         )}
 
+                        {/* ── Consumable: no scan label ── */}
                         {item.consumable_id && item.actualQuantity > 0 && (
-                          <div className="mt-2 text-[10px] text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded w-fit">
+                          <div className="mt-2 text-[10px] text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded w-fit border border-blue-100">
                             Consumable — No scan needed
+                          </div>
+                        )}
+
+                        {/* ── Qty-mode: no scan label ── */}
+                        {item.isQtyMode && item.actualQuantity > 0 && (
+                          <div className="mt-2 text-[10px] text-violet-600 font-bold bg-violet-50 px-2 py-1 rounded w-fit border border-violet-200 flex items-center gap-1">
+                            ⊞ Qty-mode — set quantity, no scan needed
                           </div>
                         )}
                       </div>
 
+                      {/* Qty stepper + remove */}
                       <div className="flex items-start gap-1.5 bg-black/5 p-1 rounded-lg h-fit">
-                        <button onClick={() => updateQty(item.id, item.actualQuantity - 1)} className="w-7 h-7 flex justify-center items-center bg-white rounded text-muted hover:text-primary"><Minus size={14}/></button>
+                        <button
+                          onClick={() => updateQty(item.id, item.actualQuantity - 1)}
+                          className="w-7 h-7 flex justify-center items-center bg-white rounded text-muted hover:text-primary"
+                        >
+                          <Minus size={14} />
+                        </button>
                         <span className="w-8 text-center text-sm font-bold">{item.actualQuantity}</span>
-                        <button onClick={() => updateQty(item.id, item.actualQuantity + 1)} className="w-7 h-7 flex justify-center items-center bg-white rounded text-muted hover:text-primary"><Plus size={14}/></button>
-                        <div className="w-[1px] h-4 bg-black/10 mx-1"></div>
-                        <button onClick={() => removeAdjustedItem(item.id)} className="w-7 h-7 flex justify-center items-center text-red-500 hover:bg-red-50 rounded"><Trash2 size={14}/></button>
+                        <button
+                          onClick={() => updateQty(item.id, item.actualQuantity + 1)}
+                          className="w-7 h-7 flex justify-center items-center bg-white rounded text-muted hover:text-primary"
+                        >
+                          <Plus size={14} />
+                        </button>
+                        <div className="w-[1px] h-4 bg-black/10 mx-1" />
+                        <button
+                          onClick={() => removeAdjustedItem(item.id)}
+                          className="w-7 h-7 flex justify-center items-center text-red-500 hover:bg-red-50 rounded"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {item.scannedPhysicalItems?.map(spi => (
-                        <span key={spi.id} className="bg-green-100 text-green-800 border border-green-300 text-[10px] font-mono px-2 py-1 rounded flex items-center gap-1 shadow-sm">
-                          <Scan size={10}/> {spi.barcode}
-                          <button onClick={() => removeScannedItem(item.id, spi.id)} className="hover:text-red-500 ml-1"><X size={10}/></button>
-                        </span>
-                      ))}
-                      {!item.consumable_id && item.actualQuantity > (item.scannedPhysicalItems?.length || 0) && (
-                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded flex items-center gap-1 border border-amber-200">
-                          <Scan size={10} className="animate-pulse"/>
-                          Scan {item.actualQuantity - (item.scannedPhysicalItems?.length || 0)} more
-                        </span>
-                      )}
-                    </div>
+                    {/* ── Scanned barcodes (unit-mode only) ── */}
+                    {!item.isQtyMode && (
+                      <div className="flex flex-wrap gap-2 mt-1">
+                        {item.scannedPhysicalItems?.map(spi => (
+                          <span
+                            key={spi.id}
+                            className="bg-green-100 text-green-800 border border-green-300 text-[10px] font-mono px-2 py-1 rounded flex items-center gap-1 shadow-sm"
+                          >
+                            <Scan size={10} /> {spi.barcode}
+                            <button
+                              onClick={() => removeScannedItem(item.id, spi.id)}
+                              className="hover:text-red-500 ml-1"
+                            >
+                              <X size={10} />
+                            </button>
+                          </span>
+                        ))}
 
+                        {/* Prompt to scan remaining units */}
+                        {!item.consumable_id && item.actualQuantity > (item.scannedPhysicalItems?.length || 0) && (
+                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded flex items-center gap-1 border border-amber-200">
+                            <Scan size={10} className="animate-pulse" />
+                            Scan {item.actualQuantity - (item.scannedPhysicalItems?.length || 0)} more
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── Assign To + Split ── */}
                     <div className="pt-2 border-t border-black/5">
                       <div className="flex justify-between mb-2">
-                        <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Assign To:</span>
-                        {item.actualQuantity > 1 && selectedRequest?.members?.length > 0 && (
-                          <button onClick={() => handleSplitItem(index)}
-                            className="text-[10px] flex items-center gap-1 text-primary bg-primary/10 px-2 py-0.5 rounded font-bold uppercase">
-                            <Copy size={10}/> Split Item
+                        <span className="text-[10px] font-bold text-muted uppercase tracking-wider">
+                          Assign To:
+                        </span>
+                        {/* Split only makes sense for unit-mode items with qty > 1 */}
+                        {!item.isQtyMode && item.actualQuantity > 1 && selectedRequest?.members?.length > 0 && (
+                          <button
+                            onClick={() => handleSplitItem(index)}
+                            className="text-[10px] flex items-center gap-1 text-primary bg-primary/10 px-2 py-0.5 rounded font-bold uppercase"
+                          >
+                            <Copy size={10} /> Split Item
                           </button>
                         )}
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <AssignChip active={item.assignTo === 'Requester'} onClick={() => setAssignTo(item.id, 'Requester')} label="Requester" icon={<User size={12}/>} />
+                        <AssignChip
+                          active={item.assignTo === 'Requester'}
+                          onClick={() => setAssignTo(item.id, 'Requester')}
+                          label="Requester"
+                          icon={<User size={12} />}
+                        />
                         {selectedRequest?.members?.map((m, mIdx) => (
-                          <AssignChip key={mIdx} active={item.assignTo === m.full_name} onClick={() => setAssignTo(item.id, m.full_name)} label={m.full_name} icon={<User size={12}/>} />
+                          <AssignChip
+                            key={mIdx}
+                            active={item.assignTo === m.full_name}
+                            onClick={() => setAssignTo(item.id, m.full_name)}
+                            label={m.full_name}
+                            icon={<User size={12} />}
+                          />
                         ))}
                       </div>
                     </div>
