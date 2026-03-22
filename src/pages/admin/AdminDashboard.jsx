@@ -154,13 +154,19 @@ export default function AdminDashboard() {
           </p>
         </div>
 
-        <button
-          onClick={() => setIsRetroModalOpen(true)}
-          className="neu-btn flex items-center gap-2 bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 shadow-sm py-2.5 px-4"
-        >
-          <History size={18} />
-          <span className="font-bold text-sm">Log Past Blackout Record</span>
-        </button>
+        <button className="flex items-start gap-3 p-4 w-full text-left bg-surface border border-black/10 rounded-xl hover:border-primary/30 hover:shadow-md transition-all group">
+  <div className="mt-0.5 text-primary opacity-80 group-hover:opacity-100 transition-opacity">
+    <History size={20} />
+  </div>
+  <div className="flex flex-col">
+    <span className="font-bold text-sm text-gray-800 group-hover:text-primary transition-colors">
+      Log Manual Borrowing
+    </span>
+    <span className="text-xs text-muted mt-0.5 leading-relaxed">
+      Did someone borrow items while the internet was down? Enter the <span className="text-blue-800 font-bold">Borrower's slip</span> here.
+    </span>
+  </div>
+</button>
       </div>
 
       {/* Stats Grid */}

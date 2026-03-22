@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
+import ManagerDirectory from './pages/manager/ManagerDirectory.jsx';
 
 // Layout
 import DashboardLayout from './components/layout/DashboardLayout.jsx';
@@ -90,6 +91,7 @@ const AppContent = () => {
         }
       >
         <Route index element={<ManagerDashboard />} />
+        <Route path="directory" element={<ManagerDirectory />} /> {/* ADD THIS LINE */}
       </Route>
 
       {/* Admin routes */}

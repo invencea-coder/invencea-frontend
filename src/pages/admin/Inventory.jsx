@@ -1,8 +1,8 @@
-// src/pages/admin/Inventory.jsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { Search, Plus, Filter, Package, BookOpen, Cpu, Settings, Trash2, Edit2, Archive, Layers } from 'lucide-react';
+import { Search, Plus, Filter, Package, BookOpen, Cpu, Settings, Trash2, Edit2, Archive, Layers, Lock } from 'lucide-react';
 import toast from 'react-hot-toast';
+import api from '../../api/axiosClient.js'; // Needed to check room status
 import NeumorphCard from '../../components/ui/NeumorphCard.jsx';
 import NeumorphButton from '../../components/ui/NeumorphButton.jsx';
 import NeumorphInput from '../../components/ui/NeumorphInput.jsx';
@@ -28,17 +28,19 @@ export default function Inventory() {
   const [isEdit, setIsEdit]         = useState(false);
   const [editId, setEditId]         = useState(null);
   const [saving, setSaving]         = useState(false);
+  
+  // --- LOCKDOWN STATE ---
+  const [isRoomLocked, setIsRoomLocked] = useState(false);
 
-  // Default form — inventory_mode is relevant for room 1 (CE/Archi)
   const defaultForm = {
     barcode:            '',
     name:               '',
     type:               'borrowable',
-    inventory_mode:     'unit',      // 'unit' | 'quantity'
+    inventory_mode:     'unit',     
     quantity_total:     1,
     quantity_available: 1,
-    qty_total:          1,           // for quantity-mode
-    qty_available:      1,           // for quantity-mode (edit only)
+    qty_total:          1,          
+    qty_available:      1,          
     serial_number:      '',
     analog_digital:     'analog',
     authors:            '',
@@ -48,7 +50,6 @@ export default function Inventory() {
   };
   const [form, setForm] = useState(defaultForm);
 
-  // ── Room config ──────────────────────────────────────────────────────────
   const roomConfig = useMemo(() => {
     switch (roomId) {
       case 1: return {
@@ -78,12 +79,20 @@ export default function Inventory() {
     }
   }, [roomId]);
 
-  // ── Data loading ─────────────────────────────────────────────────────────
   const loadData = async () => {
     setLoading(true);
     try {
-      const res = await listInventory();
-      const data = res.data?.data || {};
+      // Fetch both Room Status and Inventory data simultaneously
+      const [roomsRes, invRes] = await Promise.all([
+        api.get('/admin/rooms').catch(() => ({ data: { data: [] } })),
+        listInventory()
+      ]);
+
+      // Check room lockdown status
+      const myRoom = (roomsRes.data?.data || roomsRes.data || []).find(r => r.id === roomId);
+      if (myRoom) setIsRoomLocked(!myRoom.is_available);
+
+      const data = invRes.data?.data || {};
       const borrowables   = (data.items || []).map(i => ({ ...i, kind: 'borrowable', inventory_mode: 'unit' }));
       const consumables   = (data.consumables || []).map(i => ({ ...i, kind: 'consumable', inventory_mode: 'unit' }));
       const quantityItems = (data.quantityItems || []).map(i => ({ ...i, kind: 'quantity', inventory_mode: 'quantity' }));
@@ -93,7 +102,6 @@ export default function Inventory() {
   };
   useEffect(() => { loadData(); }, []);
 
-  // ── Filtering & sorting ───────────────────────────────────────────────────
   const filteredAndSortedItems = useMemo(() => {
     let result = items;
     result = result.filter(item =>
@@ -124,8 +132,8 @@ export default function Inventory() {
     return result;
   }, [items, searchQuery, roomId, showArchived]);
 
-  // ── Modal handlers ────────────────────────────────────────────────────────
   const openAddModal = () => {
+    if (isRoomLocked) return;
     setForm(defaultForm);
     setIsEdit(false);
     setEditId(null);
@@ -133,6 +141,7 @@ export default function Inventory() {
   };
 
   const openEditModal = useCallback((item) => {
+    if (isRoomLocked) return;
     try {
       const itemMeta = parseMeta(item.item_metadata);
       const typeMeta = parseMeta(item.type_metadata);
@@ -159,15 +168,15 @@ export default function Inventory() {
       console.error('openEditModal error:', err);
       toast.error('Could not open edit form.');
     }
-  }, []);
+  }, [isRoomLocked]);
 
   const closeModal = useCallback(() => {
     setShowModal(false);
     setTimeout(() => { setForm(defaultForm); setIsEdit(false); setEditId(null); }, 200);
   }, []);
 
-  // ── Save ──────────────────────────────────────────────────────────────────
   const handleSaveItem = async () => {
+    if (isRoomLocked) return;
     if (!form.barcode.trim() || !form.name.trim()) return toast.error('Barcode and Name are required');
     setSaving(true);
     try {
@@ -191,12 +200,10 @@ export default function Inventory() {
         status:         form.status,
         type_metadata:  typeMeta,
         item_metadata:  itemMeta,
-        // Pass inventory_mode for room 1 — ignored for other rooms
         inventory_mode: isArchi ? form.inventory_mode : 'unit',
       };
 
       if (form.inventory_mode === 'quantity' && isArchi) {
-        // Quantity-mode: qty fields
         payload.quantity_total = parseInt(form.qty_total, 10) || 1;
         if (isEdit) {
           payload.qty_total     = parseInt(form.qty_total, 10) || 1;
@@ -221,8 +228,8 @@ export default function Inventory() {
     } finally { setSaving(false); }
   };
 
-  // ── Delete / archive ──────────────────────────────────────────────────────
   const handleDelete = async (id, kind, inventory_mode) => {
+    if (isRoomLocked) return;
     if (!window.confirm('Move this item to the Archive Bin?')) return;
     try {
       await deleteInventoryItem(id, kind, inventory_mode);
@@ -231,7 +238,6 @@ export default function Inventory() {
     } catch { toast.error('Failed to delete item'); }
   };
 
-  // ── Badge helpers ─────────────────────────────────────────────────────────
   const conditionColor = (cond) => {
     switch (cond) {
       case 'Damaged':   return 'text-amber-600 bg-amber-50';
@@ -253,6 +259,20 @@ export default function Inventory() {
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      
+      {/* LOCKDOWN WARNING BANNER */}
+      {isRoomLocked && (
+        <div className="bg-red-50 border-2 border-red-200 p-4 rounded-2xl flex items-center gap-3 animate-fade-in">
+          <div className="bg-red-100 text-red-600 p-2 rounded-xl flex-shrink-0">
+            <Lock size={20} />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-red-800">Room is Unavailable</h3>
+            <p className="text-xs text-red-700 mt-0.5">Inventory modifications are locked. You can view items, but adding, editing, or archiving is temporarily disabled.</p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -262,8 +282,9 @@ export default function Inventory() {
             <p className="text-xs text-muted">Manage your branch assets</p>
           </div>
         </div>
-        <NeumorphButton variant="primary" onClick={openAddModal}>
-          <Plus size={16} className="mr-2" /> Add New Item
+        <NeumorphButton variant="primary" onClick={openAddModal} disabled={isRoomLocked}>
+          {isRoomLocked ? <Lock size={16} className="mr-2" /> : <Plus size={16} className="mr-2" />} 
+          Add New Item
         </NeumorphButton>
       </div>
 
@@ -323,7 +344,6 @@ export default function Inventory() {
                       ) : roomId === 1 ? (
                         <>
                           <td className="px-6 py-4 font-bold text-gray-800">{item.name}</td>
-                          {/* Mode badge — qty-mode vs unit */}
                           <td className="px-6 py-4">
                             {isQty ? (
                               <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 w-fit">
@@ -379,16 +399,22 @@ export default function Inventory() {
                       {/* Actions */}
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-1">
-                          <button onClick={(e) => { e.stopPropagation(); openEditModal(item); }} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="Edit">
-                            <Edit2 size={16} />
+                          <button 
+                            disabled={isRoomLocked}
+                            onClick={(e) => { e.stopPropagation(); openEditModal(item); }} 
+                            className={`p-2 rounded-lg transition-colors ${isRoomLocked ? 'text-gray-300 cursor-not-allowed' : 'text-blue-500 hover:bg-blue-50'}`} 
+                            title="Edit"
+                          >
+                            {isRoomLocked ? <Lock size={16} /> : <Edit2 size={16} />}
                           </button>
                           {!showArchived && (
                             <button
+                              disabled={isRoomLocked}
                               onClick={(e) => { e.stopPropagation(); handleDelete(item.item_id ?? item.id, item.kind, item.inventory_mode); }}
-                              className="p-2 text-muted hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                              className={`p-2 rounded-lg transition-colors ${isRoomLocked ? 'text-gray-300 cursor-not-allowed' : 'text-muted hover:text-red-500 hover:bg-red-50'}`}
                               title="Move to Archive"
                             >
-                              <Trash2 size={16} />
+                              {isRoomLocked ? <Lock size={16} /> : <Trash2 size={16} />}
                             </button>
                           )}
                         </div>
@@ -405,12 +431,9 @@ export default function Inventory() {
       {/* Add / Edit Modal */}
       <NeumorphModal open={showModal} onClose={closeModal} title={isEdit ? 'Edit Inventory Item' : 'Add New Inventory Item'}>
         <div className="space-y-4">
-
-          {/* Barcode */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <NeumorphInput label="Barcode (Required)" value={form.barcode} disabled={isEdit} onChange={e => setForm({ ...form, barcode: e.target.value })} placeholder="Scan or type barcode..." />
 
-            {/* Status — only for unit-mode borrowables */}
             {form.type === 'borrowable' && form.inventory_mode === 'unit' && (
               <div>
                 <label className="text-xs font-bold text-muted uppercase mb-1 block">Borrowing Status</label>
@@ -425,7 +448,6 @@ export default function Inventory() {
             )}
           </div>
 
-          {/* Thesis fields */}
           {roomId === 3 ? (
             <>
               <NeumorphInput label="Thesis Title" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
@@ -438,24 +460,17 @@ export default function Inventory() {
             <>
               <NeumorphInput label="Item Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
 
-              {/* Room 1 (Archi-CE): show inventory_mode selector */}
               {roomId === 1 && !isEdit && (
                 <div>
                   <label className="text-xs font-bold text-muted uppercase mb-1 block">Inventory Mode</label>
                   <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setForm({ ...form, inventory_mode: 'unit', type: 'borrowable' })}
-                      className={`p-3 rounded-xl border-2 text-sm font-bold transition-all ${form.inventory_mode === 'unit' ? 'border-primary bg-primary/5 text-primary' : 'border-black/10 text-muted'}`}
-                    >
+                    <button type="button" onClick={() => setForm({ ...form, inventory_mode: 'unit', type: 'borrowable' })}
+                      className={`p-3 rounded-xl border-2 text-sm font-bold transition-all ${form.inventory_mode === 'unit' ? 'border-primary bg-primary/5 text-primary' : 'border-black/10 text-muted'}`}>
                       Unit Mode
                       <span className="block text-[10px] font-normal opacity-60 mt-0.5">One barcode = one item</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setForm({ ...form, inventory_mode: 'quantity', type: 'borrowable' })}
-                      className={`p-3 rounded-xl border-2 text-sm font-bold transition-all flex flex-col items-center ${form.inventory_mode === 'quantity' ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-black/10 text-muted'}`}
-                    >
+                    <button type="button" onClick={() => setForm({ ...form, inventory_mode: 'quantity', type: 'borrowable' })}
+                      className={`p-3 rounded-xl border-2 text-sm font-bold transition-all flex flex-col items-center ${form.inventory_mode === 'quantity' ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-black/10 text-muted'}`}>
                       <span className="flex items-center gap-1"><Layers size={14} /> Qty Mode</span>
                       <span className="block text-[10px] font-normal opacity-60 mt-0.5">One barcode = many units</span>
                     </button>
@@ -463,7 +478,6 @@ export default function Inventory() {
                 </div>
               )}
 
-              {/* Type selector — hidden for quantity-mode (always borrowable) and for edit */}
               {form.inventory_mode === 'unit' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -485,27 +499,13 @@ export default function Inventory() {
                 </div>
               )}
 
-              {/* Quantity-mode: total qty field */}
               {form.inventory_mode === 'quantity' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <NeumorphInput
-                    label="Total Quantity (e.g. 20 sieves)"
-                    type="number" min="1"
-                    value={form.qty_total}
-                    onChange={e => setForm({ ...form, qty_total: e.target.value })}
-                  />
-                  {isEdit && (
-                    <NeumorphInput
-                      label="Currently Available"
-                      type="number" min="0"
-                      value={form.qty_available}
-                      onChange={e => setForm({ ...form, qty_available: e.target.value })}
-                    />
-                  )}
+                  <NeumorphInput label="Total Quantity (e.g. 20 sieves)" type="number" min="1" value={form.qty_total} onChange={e => setForm({ ...form, qty_total: e.target.value })} />
+                  {isEdit && <NeumorphInput label="Currently Available" type="number" min="0" value={form.qty_available} onChange={e => setForm({ ...form, qty_available: e.target.value })} />}
                 </div>
               )}
 
-              {/* Condition + Signal type — unit borrowable only */}
               {form.type === 'borrowable' && form.inventory_mode === 'unit' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>

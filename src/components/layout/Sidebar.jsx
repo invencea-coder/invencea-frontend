@@ -4,14 +4,14 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import {
   LayoutDashboard, Package, ClipboardList, BarChart3,
   DoorOpen, LogOut, ChevronLeft, ChevronRight,
-  PlusCircle, FileText, User, ScanBarcode
+  PlusCircle, FileText, User, ScanBarcode, Users
 } from 'lucide-react';
 
 const navByRole = {
   admin: [
     { label: 'Dashboard', icon: LayoutDashboard, to: '/admin' },
     { label: 'Inventory', icon: Package, to: '/admin/inventory' },
-    { label: 'Requests', icon: ClipboardList, to: '/admin/requests', hasBadge: true }, // Added hasBadge flag
+    { label: 'Requests', icon: ClipboardList, to: '/admin/requests', hasBadge: true },
     { label: 'Return Scanner', icon: ScanBarcode, to: '/admin/return-scanner' },
     { label: 'Reports', icon: BarChart3, to: '/admin/reports' },
     { label: 'Rooms', icon: DoorOpen, to: '/admin/rooms' },
@@ -25,6 +25,10 @@ const navByRole = {
     { label: 'Dashboard', icon: LayoutDashboard, to: '/student' },
     { label: 'New Request', icon: PlusCircle, to: '/student/new-request' },
     { label: 'My Requests', icon: FileText, to: '/student/my-requests' },
+  ],
+  manager: [
+    { label: 'Dashboard', icon: LayoutDashboard, to: '/manager', end: true },
+    { label: 'Directory', icon: Users, to: '/manager/directory' },
   ],
 };
 
@@ -87,11 +91,11 @@ export default function Sidebar({ pendingCount = 0 }) {
 
       {/* Nav */}
       <nav className="flex-1 flex flex-col gap-1 px-2 overflow-y-auto mt-2">
-        {nav.map(({ label, icon: Icon, to, hasBadge }) => (
+        {nav.map(({ label, icon: Icon, to, hasBadge, end }) => (
           <NavLink
             key={to}
             to={to}
-            end={to.split('/').length === 2}
+            end={end || to.split('/').length === 2}
             className={({ isActive }) =>
               `sidebar-link flex items-center justify-between p-2 rounded-lg transition-colors ${
                 isActive ? 'bg-primary/10 text-primary font-bold' : 'text-muted hover:bg-black/5'

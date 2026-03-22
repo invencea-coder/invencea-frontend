@@ -1,8 +1,8 @@
-// src/pages/admin/ReturnScanner.jsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { ScanBarcode, Camera, Search, Loader2, CheckCircle, XCircle, Layers, Minus, Plus } from "lucide-react";
+import { ScanBarcode, Camera, Search, Loader2, CheckCircle, XCircle, Layers, Minus, Plus, Lock } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import toast from "react-hot-toast";
+import api from "../../api/axiosClient.js"; // Needed to check room status
 import { returnItemByBarcode, listRequests } from "../../api/requestAPI";
 import { useAuth } from "../../context/AuthContext.jsx";
 import NeumorphCard from "../../components/ui/NeumorphCard";
@@ -19,6 +19,9 @@ export default function ReturnScanner() {
   const [activeItems, setActiveItems]       = useState([]);
   const [loadingItems, setLoadingItems]     = useState(true);
   const [searchQuery, setSearchQuery]       = useState("");
+  
+  // --- LOCKDOWN STATE ---
+  const [isRoomLocked, setIsRoomLocked] = useState(false);
 
   const scannerRef       = useRef(null);
   const scanningLockRef  = useRef(false);
@@ -27,7 +30,6 @@ export default function ReturnScanner() {
   const conditionRef     = useRef(condition);
   const qtyToReturnRef   = useRef(qtyToReturn);
   const searchInputRef   = useRef(null);
-  // FIX: activeItemsRef so keydown + camera callback always see fresh list
   const activeItemsRef   = useRef([]);
 
   useEffect(() => { conditionRef.current   = condition;   }, [condition]);
@@ -38,9 +40,17 @@ export default function ReturnScanner() {
     if (!user?.room_id) return;
     try {
       setLoadingItems(true);
-      const res      = await listRequests({ status: "ISSUED,PARTIALLY RETURNED" });
-      const requests = res?.data?.data || res.data || [];
+      
+      // Fetch Room status and active requests simultaneously
+      const [roomsRes, res] = await Promise.all([
+        api.get('/admin/rooms').catch(() => ({ data: { data: [] } })),
+        listRequests({ status: "ISSUED,PARTIALLY RETURNED" })
+      ]);
+      
+      const myRoom = (roomsRes.data?.data || roomsRes.data || []).find(r => String(r.id) === String(user.room_id));
+      if (myRoom) setIsRoomLocked(!myRoom.is_available);
 
+      const requests = res?.data?.data || res.data || [];
       const active = [];
       requests.forEach((req) => {
         const isMyRoom = !req.room_id || String(req.room_id) === String(user.room_id);
@@ -104,17 +114,20 @@ export default function ReturnScanner() {
 
   useEffect(() => { if (!authLoading) fetchActiveItems(); }, [authLoading, fetchActiveItems]);
 
-  // FIX: stageBarcode uses useCallback with no deps — reads from refs only
   const stageBarcode = useCallback((barcodeArg) => {
+    // If locked, completely ignore any physical barcode scans
+    if (isRoomLocked) return;
+    
     const barcode = (barcodeArg ?? "").toString().trim();
     if (!barcode || scanningLockRef.current) return;
     setStagedBarcode(barcode);
     const match = activeItemsRef.current.find(i => i.barcode === barcode);
     if (match?.isQtyMode) setQtyToReturn(match.qtyOutstanding || 1);
     else setQtyToReturn(1);
-  }, []);
+  }, [isRoomLocked]);
 
   const confirmReturn = async () => {
+    if (isRoomLocked) return;
     const barcode = stagedBarcode.trim();
     if (!barcode || scanningLockRef.current) return;
     scanningLockRef.current = true;
@@ -154,9 +167,9 @@ export default function ReturnScanner() {
 
   const cancelStaged = () => { setStagedBarcode(""); setQtyToReturn(1); };
 
-  // FIX: only depends on stageBarcode (stable ref) — no more stale activeItems
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
+      if (isRoomLocked) return; // Completely ignore keystrokes if locked
       if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
       const now  = Date.now();
       const diff = now - lastKeyTimeRef.current;
@@ -178,7 +191,7 @@ export default function ReturnScanner() {
     };
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [stageBarcode]);
+  }, [stageBarcode, isRoomLocked]);
 
   useEffect(() => {
     let localStoppedByUs = false;
@@ -189,14 +202,13 @@ export default function ReturnScanner() {
       try { if (typeof inst.clear === "function") await inst.clear(); } catch {}
       scannerRef.current = null;
     };
-    if (!cameraActive) { stopAndClear(); return () => {}; }
+    if (!cameraActive || isRoomLocked) { stopAndClear(); return () => {}; }
     if (scannerRef.current) return () => {};
 
     const html5QrCode = new Html5Qrcode("camera-reader");
     scannerRef.current = html5QrCode;
 
     const startScanner = async () => {
-      // FIX: handle sync throw from getCameras
       let cameras = [];
       try { cameras = await Html5Qrcode.getCameras().catch(() => []); } catch { cameras = []; }
       if (!cameras || cameras.length === 0) {
@@ -222,7 +234,7 @@ export default function ReturnScanner() {
     };
     startScanner();
     return () => { if (!localStoppedByUs) stopAndClear(); };
-  }, [cameraActive, stageBarcode]);
+  }, [cameraActive, stageBarcode, isRoomLocked]);
 
   const stagedItemInfo = stagedBarcode ? activeItems.find(i => i.barcode === stagedBarcode) || null : null;
   const filteredItems  = activeItems.filter(item => {
@@ -236,6 +248,19 @@ export default function ReturnScanner() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
+      {/* LOCKDOWN WARNING BANNER */}
+      {isRoomLocked && (
+        <div className="bg-red-50 border-2 border-red-200 p-4 rounded-2xl flex items-center gap-3 animate-fade-in">
+          <div className="bg-red-100 text-red-600 p-2 rounded-xl flex-shrink-0">
+            <Lock size={20} />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-red-800">Room is Unavailable</h3>
+            <p className="text-xs text-red-700 mt-0.5">The return scanner is disabled. Items cannot be returned to the system while the room is locked.</p>
+          </div>
+        </div>
+      )}
+
       <div className="text-center space-y-2 mb-8">
         <h1 className="text-3xl font-extrabold text-primary flex items-center justify-center gap-3">
           <ScanBarcode size={32} /> Return Scanner
@@ -245,11 +270,11 @@ export default function ReturnScanner() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1 space-y-4">
-          <NeumorphCard className="p-6 space-y-6">
+          <NeumorphCard className={`p-6 space-y-6 transition-all ${isRoomLocked ? 'opacity-70 grayscale pointer-events-none' : ''}`}>
             <div className="space-y-4">
               <div className="flex justify-between items-end">
                 <label className="text-xs font-bold text-muted uppercase tracking-wider">Scanner</label>
-                <button onClick={() => setCameraActive(s => !s)} className="text-xs flex items-center gap-1 text-primary hover:underline">
+                <button disabled={isRoomLocked} onClick={() => setCameraActive(s => !s)} className="text-xs flex items-center gap-1 text-primary hover:underline">
                   <Camera size={14} /> {cameraActive ? "Close" : "Use Camera"}
                 </button>
               </div>
@@ -257,8 +282,17 @@ export default function ReturnScanner() {
                 <div id="camera-reader" className="w-full overflow-hidden rounded-xl border-4 border-primary/20" />
               ) : (
                 <div className="w-full text-center p-5 rounded-2xl border-2 border-dashed bg-black/5 border-black/10 text-muted">
-                  <ScanBarcode size={28} className="mx-auto mb-2 opacity-40" />
-                  <span className="text-xs font-medium">Scan with USB/Bluetooth scanner or camera</span>
+                  {isRoomLocked ? (
+                    <>
+                      <Lock size={28} className="mx-auto mb-2 opacity-40" />
+                      <span className="text-xs font-medium">Scanner is locked</span>
+                    </>
+                  ) : (
+                    <>
+                      <ScanBarcode size={28} className="mx-auto mb-2 opacity-40" />
+                      <span className="text-xs font-medium">Scan with USB/Bluetooth scanner or camera</span>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -268,7 +302,7 @@ export default function ReturnScanner() {
                 <label className="text-xs font-bold text-muted uppercase tracking-wider">Item Condition</label>
                 <div className="grid grid-cols-3 gap-2">
                   {["Good", "Damaged", "Defective"].map(label => (
-                    <button key={label} onClick={() => setCondition(label)}
+                    <button key={label} disabled={isRoomLocked} onClick={() => setCondition(label)}
                       className={`p-2 rounded-xl border-2 text-[10px] uppercase font-bold tracking-wider transition-all ${
                         condition === label ? "bg-primary/10 border-primary text-primary shadow-sm" : "border-transparent bg-black/[0.02] text-muted hover:bg-black/5"
                       }`}>
@@ -322,19 +356,19 @@ export default function ReturnScanner() {
                         Quantity Returning — {stagedItemInfo.qtyReturned} returned, {stagedItemInfo.qtyOutstanding} remaining
                       </label>
                       <div className="flex items-center gap-2 bg-black/5 p-1 rounded-lg w-fit">
-                        <button onClick={() => setQtyToReturn(q => Math.max(1, q - 1))} className="w-8 h-8 flex items-center justify-center bg-white rounded text-muted hover:text-primary"><Minus size={14} /></button>
+                        <button disabled={isRoomLocked} onClick={() => setQtyToReturn(q => Math.max(1, q - 1))} className="w-8 h-8 flex items-center justify-center bg-white rounded text-muted hover:text-primary"><Minus size={14} /></button>
                         <span className="w-10 text-center text-sm font-bold">{qtyToReturn}</span>
-                        <button onClick={() => setQtyToReturn(q => Math.min(stagedItemInfo.qtyOutstanding, q + 1))} className="w-8 h-8 flex items-center justify-center bg-white rounded text-muted hover:text-primary"><Plus size={14} /></button>
+                        <button disabled={isRoomLocked} onClick={() => setQtyToReturn(q => Math.min(stagedItemInfo.qtyOutstanding, q + 1))} className="w-8 h-8 flex items-center justify-center bg-white rounded text-muted hover:text-primary"><Plus size={14} /></button>
                       </div>
                     </div>
                   )}
 
                   <div className="flex gap-2 pt-1">
-                    <button onClick={cancelStaged} disabled={isProcessing}
+                    <button onClick={cancelStaged} disabled={isProcessing || isRoomLocked}
                       className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border-2 border-black/10 text-xs font-bold text-muted hover:bg-black/5 disabled:opacity-50">
                       <XCircle size={14} /> Cancel
                     </button>
-                    <button onClick={confirmReturn} disabled={isProcessing}
+                    <button onClick={confirmReturn} disabled={isProcessing || isRoomLocked}
                       className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary/90 disabled:opacity-60">
                       {isProcessing ? <><Loader2 size={14} className="animate-spin" /> Processing...</> : <><CheckCircle size={14} /> Confirm Return</>}
                     </button>
@@ -397,7 +431,6 @@ export default function ReturnScanner() {
                         </td>
                         <td className="px-4 py-3 text-xs text-right">
                           <span className="text-muted block">#{item.requestId}</span>
-                          {/* FIX: show last_return_time for partial returns */}
                           {item.lastReturnTime ? (
                             <span className="text-teal-600 font-bold block mt-0.5">
                               ↩ {new Date(item.lastReturnTime).toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}

@@ -1,4 +1,3 @@
-// src/pages/shared/NewRequest.jsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -31,7 +30,11 @@ export default function NewRequest() {
   const [refreshTrigger, setRefreshTrigger]     = useState(0);
   const [cart, setCart]                         = useState([]);
   const [companions, setCompanions]             = useState([]);
+  
+  // Purpose State
   const [purpose, setPurpose]                   = useState('');
+  const [customPurpose, setCustomPurpose]       = useState(''); // For the 'Other' fallback
+  
   const [submitting, setSubmitting]             = useState(false);
   const [scheduleType, setScheduleType]         = useState('today');
   const [facultyExtendedDate, setFacultyExtendedDate] = useState('');
@@ -63,10 +66,9 @@ export default function NewRequest() {
       const res = await listInventory({ room_id: selectedRoomId });
       const data = res.data?.data || {};
 
-      // Unit-mode borrowables (ECE/CpE): one row per physical unit, filter available only
+      // Unit-mode borrowables (ECE/CpE)
       const unitItems = (data.items || [])
         .filter(i => i.status === 'available')
-        // Deduplicate: show one row per inventory_type (users add 1, system picks a unit at issuance)
         .reduce((acc, i) => {
           if (!acc.find(x => x.inventory_type_id === i.inventory_type_id)) acc.push(i);
           return acc;
@@ -78,14 +80,13 @@ export default function NewRequest() {
         .filter(i => i.quantity_available > 0)
         .map(i => ({ ...i, kind: 'consumable', inventory_mode: 'unit' }));
 
-      // Quantity-mode stock entries (CE/Archi): one row per stock entry, deduplicated by stock_id
+      // Quantity-mode stock entries (CE/Archi)
       const qtyItems = (data.quantityItems || [])
         .filter(i => i.qty_available > 0)
         .map(i => ({
           ...i,
           kind: 'quantity',
           inventory_mode: 'quantity',
-          // qty_available and qty_total already on the object from the service
         }));
 
       const freshInventory = [...unitItems, ...consumables, ...qtyItems];
@@ -110,7 +111,6 @@ export default function NewRequest() {
             return cartItem;
           }
 
-          // Unit / consumable — existing logic
           const fresh = freshInventory.find(i => i.inventory_type_id === cartItem.inventory_type_id && i.barcode === cartItem.barcode);
           if (!fresh) {
             modified = true;
@@ -148,25 +148,18 @@ export default function NewRequest() {
   const addToCart = (item) => {
     if (isRoomClosed) return;
 
-    // ── Quantity-mode item ────────────────────────────────────────────────
     if (item.inventory_mode === 'quantity') {
       const exists = cart.find(c => c.stock_id === item.stock_id);
       if (exists) {
         if (exists.qty_requested >= item.qty_available) return toast.error(`Only ${item.qty_available} available.`);
         setCart(cart.map(c => c.stock_id === item.stock_id ? { ...c, qty_requested: c.qty_requested + 1 } : c));
       } else {
-        setCart([...cart, {
-          ...item,
-          kind: 'quantity',
-          qty_requested: 1,
-          assigned_to: 'Requester',
-        }]);
+        setCart([...cart, { ...item, kind: 'quantity', qty_requested: 1, assigned_to: 'Requester' }]);
       }
       toast.success(`${item.name} added`);
       return;
     }
 
-    // ── Consumable ────────────────────────────────────────────────────────
     if (item.kind === 'consumable') {
       const exists = cart.find(c => c.inventory_type_id === item.inventory_type_id && c.kind === 'consumable');
       if (exists) {
@@ -179,7 +172,6 @@ export default function NewRequest() {
       return;
     }
 
-    // ── Unit-mode borrowable ──────────────────────────────────────────────
     const exists = cart.find(c => c.inventory_type_id === item.inventory_type_id && c.kind === 'borrowable');
     if (!exists) {
       setCart([...cart, { ...item, quantity: 1, assigned_to: 'Requester' }]);
@@ -214,15 +206,16 @@ export default function NewRequest() {
     if (isRoomClosed) return toast.error('This room is currently closed.');
     if (!selectedRoomId) return toast.error('Please select a department room first');
     if (cart.length === 0) return toast.error('Your cart is empty');
-    if (!purpose) return toast.error('Please enter a purpose for this request');
+    
+    const finalPurpose = purpose === 'Other' ? customPurpose.trim() : purpose;
+    if (!finalPurpose) return toast.error('Please select or specify a purpose for this request');
 
     setSubmitting(true);
     try {
       const payload = {
         room_id: selectedRoomId,
-        purpose,
+        purpose: finalPurpose,
         items: cart.map(c => {
-          // ── Quantity-mode ─────────────────────────────────────────────
           if (c.inventory_mode === 'quantity') {
             return {
               inventory_type_id: c.inventory_type_id,
@@ -231,7 +224,6 @@ export default function NewRequest() {
               assigned_to: c.assigned_to,
             };
           }
-          // ── Consumable or unit-mode ───────────────────────────────────
           return {
             inventory_type_id: c.inventory_type_id,
             consumable_id: c.kind === 'consumable' ? c.item_id : null,
@@ -276,7 +268,7 @@ export default function NewRequest() {
 
   const handleFinalClose = () => {
     setSuccessData(null); setConfirmClose(false); setCart([]); setCompanions([]);
-    setPurpose(''); setScheduleType('today'); setFacultyExtendedDate('');
+    setPurpose(''); setCustomPurpose(''); setScheduleType('today'); setFacultyExtendedDate('');
     setFacultyTodayEnd(''); setInventorySearch('');
     if (!initialRoom) setSelectedRoomId('');
   };
@@ -467,10 +459,47 @@ export default function NewRequest() {
         {/* RIGHT: Cart & Submission */}
         <div className={`space-y-6 h-[650px] overflow-y-auto pr-2 custom-scrollbar transition-opacity duration-300 ${isRoomClosed ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
           <NeumorphCard className="p-5 space-y-4">
-            <NeumorphInput label="Purpose / Activity" placeholder="e.g. Lab Experiment 101" value={purpose} onChange={e => setPurpose(e.target.value)} />
+            
+            {/* PURPOSE DROPDOWN */}
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] font-bold text-primary uppercase tracking-widest mb-2 block">
+                  Purpose / Activity
+                </label>
+                <select
+                  className="neu-input w-full bg-white text-sm"
+                  value={purpose}
+                  onChange={e => {
+                    setPurpose(e.target.value);
+                    if (e.target.value !== 'Other') setCustomPurpose(''); // Clear custom input if they switch
+                  }}
+                >
+                  <option value="" disabled>-- Select Purpose --</option>
+                  <option value="Laboratory Activity">Laboratory Activity</option>
+                  <option value="Class Demonstration / Instruction">Class Demonstration / Instruction</option>
+                  <option value="Thesis / Capstone Project">Thesis / Capstone Project</option>
+                  <option value="Course Project / Assignment">Course Project / Assignment</option>
+                  <option value="Research / Development">Research / Development</option>
+                  <option value="Field Work / Surveying">Field Work / Surveying</option>
+                  <option value="Event / Competition">Event / Competition</option>
+                  <option value="Other">Other (Specify below)</option>
+                </select>
+              </div>
+
+              {/* Show text input ONLY if 'Other' is selected */}
+              {purpose === 'Other' && (
+                <div className="animate-fade-in">
+                  <NeumorphInput 
+                    placeholder="Please specify your purpose..." 
+                    value={customPurpose} 
+                    onChange={e => setCustomPurpose(e.target.value)} 
+                  />
+                </div>
+              )}
+            </div>
 
             {isFaculty && (
-              <div className="p-4 bg-primary/5 rounded-xl border border-primary/20 space-y-4">
+              <div className="p-4 bg-primary/5 rounded-xl border border-primary/20 space-y-4 mt-4">
                 <label className="text-[10px] font-bold text-primary uppercase tracking-widest flex items-center gap-1"><Calendar size={14} /> Schedule Type</label>
                 <div className="flex gap-4">
                   <label className="flex items-center gap-2 text-sm font-medium">
