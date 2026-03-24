@@ -1,138 +1,138 @@
-// src/pages/student/StudentDashboard.jsx
-import React, { useState, useEffect } from 'react';
+// src/pages/auth/StudentLogin.jsx
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, FileText, KeyRound } from 'lucide-react';
+import { GraduationCap, ArrowLeft, LogIn } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useAuth } from '../../hooks/useAuth.js';
-import { listRequests } from '../../api/requestAPI.js';
-import { changeStudentPin } from '../../api/authAPI.js';
+
+// Import your custom hooks and API functions
+import { useAuth } from '../../hooks/useAuth.js'; 
+import { studentLogin } from '../../api/authAPI.js'; // Using your API service!
+
+// UI Components
 import NeumorphCard from '../../components/ui/NeumorphCard.jsx';
-import NeumorphButton from '../../components/ui/NeumorphButton.jsx';
-import NeumorphModal from '../../components/ui/NeumorphModal.jsx';
 import NeumorphInput from '../../components/ui/NeumorphInput.jsx';
-import { statusColor } from '../../utils/format.js';
-import { fmtDateTime } from '../../utils/date.js';
+import NeumorphButton from '../../components/ui/NeumorphButton.jsx';
 
-export default function StudentDashboard() {
-  const { user } = useAuth();
+export default function StudentLogin() {
   const navigate = useNavigate();
-  const [requests, setRequests] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { login } = useAuth(); 
+  
+  // Updated state to match your API parameters
+  const [formData, setFormData] = useState({ full_name: '', student_id: '', pin: '' });
+  const [loading, setLoading] = useState(false);
 
-  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
-  const [pinForm, setPinForm] = useState({ current_pin: '', new_pin: '', confirm_pin: '' });
-  const [changingPin, setChangingPin] = useState(false);
-
-  useEffect(() => {
-    if (user?.id) {
-      // FIX: Only fetch requests for this specific user
-      listRequests({ user_id: user.id })
-        .then(r => setRequests(r.data.data))
-        .catch(() => toast.error('Failed to load recent requests'))
-        .finally(() => setLoading(false));
+  const handleChange = (field, value) => {
+    // If it's the PIN, restrict it to numbers only and max 4 digits
+    if (field === 'pin') {
+      const onlyNums = value.replace(/\D/g, '');
+      if (onlyNums.length <= 4) {
+        setFormData({ ...formData, [field]: onlyNums });
+      }
+      return;
     }
-  }, [user]);
-
-  const handlePinChangeInput = (field, value) => {
-    const onlyNums = value.replace(/\D/g, '');
-    if (onlyNums.length <= 4) setPinForm({ ...pinForm, [field]: onlyNums });
+    setFormData({ ...formData, [field]: value });
   };
 
-  const handlePinSubmit = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (pinForm.new_pin.length !== 4) return toast.error('New PIN must be exactly 4 digits.');
-    if (pinForm.new_pin !== pinForm.confirm_pin) return toast.error('New PINs do not match.');
 
-    setChangingPin(true);
+    if (!formData.full_name.trim() || !formData.student_id.trim() || !formData.pin.trim()) {
+      return toast.error('Please fill out all fields to continue.');
+    }
+    
+    if (formData.pin.length !== 4) {
+      return toast.error('PIN must be exactly 4 digits.');
+    }
+
+    setLoading(true);
     try {
-      await changeStudentPin({ current_pin: pinForm.current_pin, new_pin: pinForm.new_pin });
-      toast.success('Security PIN changed successfully!');
-      setIsPinModalOpen(false);
-      setPinForm({ current_pin: '', new_pin: '', confirm_pin: '' });
+      // Use your dedicated API function
+      const res = await studentLogin(formData.full_name, formData.student_id, formData.pin);
+      
+      // Extract the token and user data from your backend response
+      const token = res.data?.token || res.data?.data?.token;
+      const userData = res.data?.user || res.data?.data?.user || res.data?.data;
+
+      if (!token) throw new Error("No token received from server");
+
+      // Pass the token and user to your AuthContext to establish the session
+      await login(token, userData); 
+      
+      toast.success('Login successful!');
+      navigate('/student'); 
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to change PIN');
+      toast.error(err.response?.data?.message || 'Invalid credentials. Please try again.');
     } finally {
-      setChangingPin(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
-      <NeumorphCard className="p-4 flex justify-between items-start">
-        <div>
-          <p className="text-xs text-muted uppercase tracking-wider">Logged in as</p>
-          <p className="text-xl font-display font-bold text-primary">{user?.full_name || user?.name}</p>
-          <p className="text-sm font-mono text-muted">{user?.student_id}</p>
-        </div>
-        <NeumorphButton 
-          variant="outline" 
-          size="sm" 
-          onClick={() => setIsPinModalOpen(true)} 
-          className="flex items-center gap-2 text-xs"
+    <div className="min-h-screen flex flex-col items-center justify-center bg-surface dark:bg-darkSurface px-4">
+      <div className="animate-slide-up w-full max-w-md">
+        
+        {/* Back Button */}
+        <button 
+          onClick={() => navigate('/')}
+          className="mb-6 flex items-center gap-2 text-sm font-semibold text-muted hover:text-primary transition-colors"
         >
-          <KeyRound size={14} /> Change PIN
-        </NeumorphButton>
-      </NeumorphCard>
+          <ArrowLeft size={16} /> Back to roles
+        </button>
 
-      <div className="grid grid-cols-2 gap-4">
-        <NeumorphCard
-          hover
-          className="p-5 flex flex-col items-center gap-3 cursor-pointer"
-          onClick={() => navigate('/student/new-request')}
-        >
-          <PlusCircle size={32} className="text-primary" />
-          <span className="text-sm font-semibold text-primary">New Request</span>
+        <NeumorphCard className="p-8 relative overflow-hidden">
+          {/* Decorative background element */}
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-success/10 rounded-full blur-2xl pointer-events-none" />
+
+          <div className="text-center mb-8 relative z-10">
+            <div className="w-16 h-16 mx-auto neu-card-sm flex items-center justify-center bg-gradient-to-br from-success/10 to-info/5 mb-4 rounded-full">
+              <GraduationCap size={32} className="text-primary dark:text-darkText" />
+            </div>
+            <h2 className="font-display text-2xl font-bold text-primary dark:text-darkText">Student Login</h2>
+            <p className="text-sm text-muted mt-2">Enter your details to access the InvenCEA system.</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
+            <NeumorphInput 
+              label="Full Name" 
+              type="text" 
+              placeholder="e.g., Juan Dela Cruz" 
+              value={formData.full_name} 
+              onChange={e => handleChange('full_name', e.target.value)} 
+              autoFocus 
+            />
+            
+            <NeumorphInput 
+              label="Student ID" 
+              type="text" 
+              placeholder="e.g., 2021-0001" 
+              value={formData.student_id} 
+              onChange={e => handleChange('student_id', e.target.value)} 
+            />
+
+            <NeumorphInput 
+              label="4-Digit Security PIN" 
+              type="password" 
+              inputMode="numeric"
+              placeholder="••••" 
+              value={formData.pin} 
+              onChange={e => handleChange('pin', e.target.value)} 
+            />
+
+            <div className="pt-4">
+              <NeumorphButton 
+                variant="primary" 
+                type="submit" 
+                loading={loading}
+                className="w-full py-3 flex justify-center items-center gap-2 text-base"
+              >
+                {!loading && <LogIn size={18} />}
+                {loading ? 'Authenticating...' : 'Sign In'}
+              </NeumorphButton>
+            </div>
+          </form>
         </NeumorphCard>
-        <NeumorphCard
-          hover
-          className="p-5 flex flex-col items-center gap-3 cursor-pointer"
-          onClick={() => navigate('/student/my-requests')}
-        >
-          <FileText size={32} className="text-muted" />
-          <span className="text-sm font-semibold text-primary">Request History</span>
-        </NeumorphCard>
+
       </div>
-
-      <NeumorphCard className="p-4">
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="font-display font-semibold text-primary">Recent Requests</h3>
-          <button onClick={() => navigate('/student/my-requests')} className="text-xs text-primary hover:underline font-bold">View All</button>
-        </div>
-        {loading ? (
-          <div className="flex justify-center py-6">
-            <div className="neu-spinner w-6 h-6" />
-          </div>
-        ) : requests.length === 0 ? (
-          <p className="text-sm text-center text-muted py-4">No requests yet</p>
-        ) : (
-          <div className="space-y-2">
-            {requests.slice(0, 5).map(r => (
-              <div key={r.id} className="neu-card-sm p-3 flex items-center justify-between">
-                <div>
-                  <span className="font-mono text-xs text-muted">#{r.id}</span>
-                  <p className="text-xs font-bold text-gray-800 mt-0.5 truncate max-w-[150px]">{r.purpose || 'General Request'}</p>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border shadow-sm ${statusColor(r.status)}`}>{r.status}</span>
-                  <span className="text-[10px] text-muted">{fmtDateTime(r.requested_time)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </NeumorphCard>
-
-      <NeumorphModal open={isPinModalOpen} onClose={() => setIsPinModalOpen(false)} title="Change Your Security PIN">
-        <form onSubmit={handlePinSubmit} className="space-y-4 p-2 mt-2">
-          <NeumorphInput label="Current PIN" type="password" inputMode="numeric" placeholder="••••" value={pinForm.current_pin} onChange={e => handlePinChangeInput('current_pin', e.target.value)} autoFocus />
-          <NeumorphInput label="New 4-Digit PIN" type="password" inputMode="numeric" placeholder="••••" value={pinForm.new_pin} onChange={e => handlePinChangeInput('new_pin', e.target.value)} />
-          <NeumorphInput label="Confirm New PIN" type="password" inputMode="numeric" placeholder="••••" value={pinForm.confirm_pin} onChange={e => handlePinChangeInput('confirm_pin', e.target.value)} />
-          <div className="flex justify-end gap-3 pt-4 border-t mt-4">
-            <NeumorphButton variant="outline" type="button" onClick={() => setIsPinModalOpen(false)}>Cancel</NeumorphButton>
-            <NeumorphButton variant="primary" type="submit" loading={changingPin}>Update PIN</NeumorphButton>
-          </div>
-        </form>
-      </NeumorphModal>
     </div>
   );
 }
