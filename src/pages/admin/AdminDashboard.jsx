@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ClipboardList, PackageCheck, Clock, AlertTriangle,
-  ArrowRight, Loader2, History,
+  ArrowRight, Loader2, History, FlaskConical, X,
 } from 'lucide-react';
 import RetroactiveLogModal from '../../components/admin/RetroactiveLogModal';
 import ForceChangePasswordModal from '../../components/admin/ForceChangePasswordModal';
@@ -42,38 +42,28 @@ const StatCard = ({ icon: Icon, label, value, color, sub, onClick }) => (
 const ROW_HEIGHT  = 57;
 const MAX_VISIBLE = 3;
 
-/**
- * Returns a friendly first name from a full name string.
- * Skips honorifics like Mr., Mrs., Ms., Dr., Prof. so the
- * greeting shows the actual given name instead of the title.
- */
 const HONORIFICS = new Set(['mr.', 'mrs.', 'ms.', 'miss', 'dr.', 'prof.', 'sr.', 'jr.']);
 
 function getFirstName(fullName) {
   if (!fullName) return 'Admin';
   const parts = fullName.trim().split(/\s+/);
-  // Walk through parts, skip any honorific tokens
   for (const part of parts) {
-    if (!HONORIFICS.has(part.toLowerCase())) {
-      return part;
-    }
+    if (!HONORIFICS.has(part.toLowerCase())) return part;
   }
-  // Fallback: just use the last part if everything was honorifics somehow
   return parts[parts.length - 1] || 'Admin';
 }
 
 export default function AdminDashboard() {
-  const navigate    = useNavigate();
-  const { user }    = useAuth();
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [stats, setStats]                       = useState(null);
   const [recent, setRecent]                     = useState([]);
   const [loading, setLoading]                   = useState(true);
   const [isRetroModalOpen, setIsRetroModalOpen] = useState(false);
+  const [sessionAlerts, setSessionAlerts]       = useState([]);
 
-  // ── Password-reset gate ──────────────────────────────────────────────────
   const mustResetPassword = user?.needs_password_reset === true;
 
-  // ── Data loading ─────────────────────────────────────────────────────────
   const loadDashboardData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
@@ -100,11 +90,9 @@ export default function AdminDashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    loadDashboardData();
-  }, [loadDashboardData]);
+  useEffect(() => { loadDashboardData(); }, [loadDashboardData]);
 
-  // Schedule a silent reload at midnight
+  // Midnight reload
   useEffect(() => {
     const now      = new Date();
     const midnight = new Date();
@@ -113,17 +101,30 @@ export default function AdminDashboard() {
     return () => clearTimeout(timer);
   }, [loadDashboardData]);
 
-  // Real-time socket listeners
+  // Socket listeners — extended with lab session alerts
   useEffect(() => {
     const socketURL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:4000';
     const socket = io(socketURL);
+
     socket.on('inventory-updated', () => loadDashboardData(true));
     socket.on('request-updated',   () => loadDashboardData(true));
     socket.on('request-issued',    () => loadDashboardData(true));
+
+    socket.on('admin-session-alert', (data) => {
+      setSessionAlerts(prev => {
+        // Deduplicate by session_id + type
+        const key = `${data.session_id}-${data.type}`;
+        const exists = prev.find(a => `${a.session_id}-${a.type}` === key);
+        if (exists) return prev;
+        return [data, ...prev].slice(0, 10);
+      });
+    });
+
     return () => socket.disconnect();
   }, [loadDashboardData]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const dismissAlert = (idx) => setSessionAlerts(prev => prev.filter((_, i) => i !== idx));
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -137,7 +138,6 @@ export default function AdminDashboard() {
   return (
     <div className="p-6 space-y-8 max-w-7xl mx-auto relative">
 
-      {/* Mandatory password-reset gate — blocks dashboard until resolved */}
       {mustResetPassword && <ForceChangePasswordModal />}
 
       {/* Header */}
@@ -154,20 +154,85 @@ export default function AdminDashboard() {
           </p>
         </div>
 
-        <button className="flex items-start gap-3 p-4 w-full text-left bg-surface border border-black/10 rounded-xl hover:border-primary/30 hover:shadow-md transition-all group">
-  <div className="mt-0.5 text-primary opacity-80 group-hover:opacity-100 transition-opacity">
-    <History size={20} />
-  </div>
-  <div className="flex flex-col">
-    <span className="font-bold text-sm text-gray-800 group-hover:text-primary transition-colors">
-      Log Manual Borrowing
-    </span>
-    <span className="text-xs text-muted mt-0.5 leading-relaxed">
-      Did someone borrow items while the internet was down? Enter the <span className="text-blue-800 font-bold">Borrower's slip</span> here.
-    </span>
-  </div>
-</button>
+        <button
+          onClick={() => setIsRetroModalOpen(true)}
+          className="flex items-start gap-3 p-4 w-full md:w-auto text-left bg-surface border border-black/10 rounded-xl hover:border-primary/30 hover:shadow-md transition-all group"
+        >
+          <div className="mt-0.5 text-primary opacity-80 group-hover:opacity-100 transition-opacity">
+            <History size={20} />
+          </div>
+          <div className="flex flex-col">
+            <span className="font-bold text-sm text-gray-800 group-hover:text-primary transition-colors">
+              Log Manual Borrowing
+            </span>
+            <span className="text-xs text-muted mt-0.5 leading-relaxed">
+              Did someone borrow items while the internet was down? Enter the{' '}
+              <span className="text-blue-800 font-bold">Borrower's slip</span> here.
+            </span>
+          </div>
+        </button>
       </div>
+
+      {/* ── Lab Session Alerts ─────────────────────────────────────────────── */}
+      {sessionAlerts.length > 0 && (
+        <div className="space-y-2">
+          {sessionAlerts.map((alert, idx) => (
+            <div
+              key={idx}
+              className={`flex items-start gap-3 p-4 rounded-2xl border animate-fade-in ${
+                alert.type === 'OVERDUE'
+                  ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
+                  : 'bg-amber-50 border-amber-200 dark:bg-amber-900/20 dark:border-amber-800'
+              }`}
+            >
+              <div className={`p-2 rounded-xl flex-shrink-0 ${
+                alert.type === 'OVERDUE'
+                  ? 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400'
+                  : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+              }`}>
+                <FlaskConical size={18} />
+              </div>
+
+              <div className="flex-1 min-w-0">
+                {alert.type === 'OVERDUE' ? (
+                  <>
+                    <p className="text-sm font-bold text-red-800 dark:text-red-300">
+                      Overdue Lab Items
+                    </p>
+                    {(alert.overdue || []).map((od, i) => (
+                      <p key={i} className="text-xs text-red-700 dark:text-red-400 mt-0.5">
+                        Session <strong>{od.code}</strong> ({od.purpose}) —{' '}
+                        {od.overdue_requests?.length || 0} student(s) have not returned items
+                      </p>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-bold text-amber-800 dark:text-amber-300">
+                      Lab Session Ending Soon — {alert.code}
+                    </p>
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                      {alert.purpose} · {alert.room_name} ·{' '}
+                      {alert.claimants?.length || 0} student(s) borrowed items · Return by{' '}
+                      {new Date(alert.end_time).toLocaleTimeString('en-PH', {
+                        hour: '2-digit', minute: '2-digit', hour12: true,
+                      })}
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <button
+                onClick={() => dismissAlert(idx)}
+                className="text-muted hover:text-gray-600 dark:hover:text-gray-300 flex-shrink-0 p-1 rounded transition-colors"
+                title="Dismiss"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -215,10 +280,7 @@ export default function AdminDashboard() {
             </table>
 
             <div
-              style={{
-                maxHeight: ROW_HEIGHT * MAX_VISIBLE,
-                overflowY: hasScroll ? 'auto' : 'hidden',
-              }}
+              style={{ maxHeight: ROW_HEIGHT * MAX_VISIBLE, overflowY: hasScroll ? 'auto' : 'hidden' }}
               className={hasScroll ? 'custom-scrollbar' : ''}
             >
               <table className="w-full text-sm">
@@ -231,7 +293,14 @@ export default function AdminDashboard() {
                       style={{ height: ROW_HEIGHT }}
                     >
                       <td className="px-6 py-3 w-[22%]">
-                        <p className="font-medium text-primary dark:text-darkText leading-tight">{req.requester_name}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-medium text-primary dark:text-darkText leading-tight">{req.requester_name}</p>
+                          {req.lab_session_id && (
+                            <span title="Lab Session Request">
+                              <FlaskConical size={12} className="text-emerald-500 flex-shrink-0" />
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[10px] uppercase font-bold text-muted dark:text-darkMuted mt-0.5">{req.requester_type}</p>
                       </td>
                       <td className="px-6 py-3 w-[15%] font-medium text-gray-700 dark:text-gray-300">{req.room_code ?? '—'}</td>
