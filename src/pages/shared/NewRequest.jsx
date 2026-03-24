@@ -1,3 +1,4 @@
+// src/pages/shared/NewRequest.jsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -29,11 +30,13 @@ export default function NewRequest() {
   const [inventorySearch, setInventorySearch]   = useState('');
   const [refreshTrigger, setRefreshTrigger]     = useState(0);
   const [cart, setCart]                         = useState([]);
+  
+  // Companions (Only used for Students now)
   const [companions, setCompanions]             = useState([]);
   
   // Purpose State
   const [purpose, setPurpose]                   = useState('');
-  const [customPurpose, setCustomPurpose]       = useState(''); // For the 'Other' fallback
+  const [customPurpose, setCustomPurpose]       = useState(''); 
   
   const [submitting, setSubmitting]             = useState(false);
   const [scheduleType, setScheduleType]         = useState('today');
@@ -44,7 +47,11 @@ export default function NewRequest() {
 
   // 1. Rooms + sockets
   useEffect(() => {
-    api.get('/admin/rooms').then(res => setAvailableRooms(res.data?.data || res.data || [])).catch(() => toast.error('Could not load department rooms'));
+    // FIX: Try fetching from the public/shared /rooms route first so students/faculty aren't blocked by admin middleware
+    api.get('/rooms')
+      .catch(() => api.get('/admin/rooms')) // Fallback just in case
+      .then(res => setAvailableRooms(res.data?.data || res.data || []))
+      .catch(() => toast.error('Could not load department rooms'));
 
     const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
     socket.on('room-updated', (data) => {
@@ -59,14 +66,13 @@ export default function NewRequest() {
   const currentRoom   = useMemo(() => availableRooms.find(r => String(r.id) === String(selectedRoomId)), [availableRooms, selectedRoomId]);
   const isRoomClosed  = currentRoom && !currentRoom.is_available;
 
-  // 2. Fetch inventory — merges unit items, consumables, AND quantity-mode stocks
+  // 2. Fetch inventory
   const fetchInv = useCallback(async () => {
     if (!selectedRoomId || isRoomClosed) { setInventory([]); return; }
     try {
       const res = await listInventory({ room_id: selectedRoomId });
       const data = res.data?.data || {};
 
-      // Unit-mode borrowables (ECE/CpE)
       const unitItems = (data.items || [])
         .filter(i => i.status === 'available')
         .reduce((acc, i) => {
@@ -75,12 +81,10 @@ export default function NewRequest() {
         }, [])
         .map(i => ({ ...i, kind: 'borrowable', inventory_mode: 'unit' }));
 
-      // Consumables
       const consumables = (data.consumables || [])
         .filter(i => i.quantity_available > 0)
         .map(i => ({ ...i, kind: 'consumable', inventory_mode: 'unit' }));
 
-      // Quantity-mode stock entries (CE/Archi)
       const qtyItems = (data.quantityItems || [])
         .filter(i => i.qty_available > 0)
         .map(i => ({
@@ -196,7 +200,7 @@ export default function NewRequest() {
     }));
   };
 
-  const addCompanion = () => setCompanions([...companions, { name: '', student_id: '', start_time: '', end_time: '' }]);
+  const addCompanion = () => setCompanions([...companions, { name: '', student_id: '' }]);
   const updateCompanion = (idx, field, value) => {
     const c = [...companions]; c[idx][field] = value; setCompanions(c);
   };
@@ -231,24 +235,21 @@ export default function NewRequest() {
             assigned_to: c.assigned_to,
           };
         }),
-        companions: companions
-          .filter(c => c.name && (!isFaculty ? c.student_id : true))
-          .map(c => {
-            let start = null, end = null;
-            if (isFaculty && scheduleType === 'today' && c.start_time && c.end_time) {
-              const today = new Date().toISOString().split('T')[0];
-              start = new Date(`${today}T${c.start_time}`).toISOString();
-              end   = new Date(`${today}T${c.end_time}`).toISOString();
-            }
-            return { name: c.name, student_id: isFaculty ? (c.student_id || 'N/A') : c.student_id, start_time: start, end_time: end };
-          }),
+        // FIX: Completely ignore companions if user is Faculty
+        companions: isFaculty ? [] : companions
+          .filter(c => c.name && c.student_id)
+          .map(c => ({ 
+            name: c.name, 
+            student_id: c.student_id, 
+            start_time: null, 
+            end_time: null 
+          })),
       };
 
       if (isFaculty) {
         if (scheduleType === 'extended') {
           if (!facultyExtendedDate) return toast.error('Select an extended return date');
           payload.scheduled_time = new Date(facultyExtendedDate).toISOString();
-          payload.companions = [];
         } else {
           if (!facultyTodayEnd) return toast.error('Select your base return time');
           const today = new Date().toISOString().split('T')[0];
@@ -357,7 +358,8 @@ export default function NewRequest() {
           </div>
         </div>
 
-        {companions.length > 0 && (
+        {/* Hide Assignment if no companions exist (which is always true for Faculty now) */}
+        {!isFaculty && companions.length > 0 && (
           <div className="flex items-center gap-2 mt-2 pt-2 border-t border-black/5">
             <span className="text-[10px] uppercase text-muted font-bold tracking-wider">Assign to:</span>
             <select
@@ -392,7 +394,7 @@ export default function NewRequest() {
               className="neu-input w-full bg-white text-sm"
               value={selectedRoomId}
               onChange={handleRoomChange}
-              disabled={isFaculty && user.room_id}
+              disabled={isFaculty && !!initialRoom}
             >
               <option value="" disabled>-- Select Location --</option>
               {availableRooms.map(room => (
@@ -518,7 +520,8 @@ export default function NewRequest() {
             )}
           </NeumorphCard>
 
-          {(!isFaculty || (isFaculty && scheduleType === 'today')) && (
+          {/* FIX: Companions section is now completely hidden for Faculty */}
+          {!isFaculty && (
             <NeumorphCard className="p-5 space-y-4">
               <div className="flex justify-between items-center">
                 <label className="text-[10px] font-bold text-muted uppercase tracking-widest flex items-center gap-1"><Users size={14} /> Companions</label>
@@ -526,16 +529,9 @@ export default function NewRequest() {
               </div>
               {companions.map((comp, idx) => (
                 <div key={idx} className="grid grid-cols-2 gap-2 p-3 bg-black/5 rounded-xl relative mt-2 border border-black/5">
-                  <input placeholder="Full Name" className={`neu-input text-sm ${isFaculty ? 'col-span-2' : ''}`} value={comp.name} onChange={e => updateCompanion(idx, 'name', e.target.value)} />
-                  {!isFaculty && (
-                    <input placeholder="ID Number" className="neu-input text-sm" value={comp.student_id} onChange={e => updateCompanion(idx, 'student_id', e.target.value)} />
-                  )}
-                  {isFaculty && (
-                    <>
-                      <input type="time" className="neu-input text-sm" value={comp.start_time} onChange={e => updateCompanion(idx, 'start_time', e.target.value)} title="Handoff Start Time" />
-                      <input type="time" className="neu-input text-sm" value={comp.end_time} onChange={e => updateCompanion(idx, 'end_time', e.target.value)} title="Handoff End Time" />
-                    </>
-                  )}
+                  <input placeholder="Full Name" className="neu-input text-sm" value={comp.name} onChange={e => updateCompanion(idx, 'name', e.target.value)} />
+                  <input placeholder="ID Number" className="neu-input text-sm" value={comp.student_id} onChange={e => updateCompanion(idx, 'student_id', e.target.value)} />
+                  
                   <button onClick={() => setCompanions(companions.filter((_, i) => i !== idx))} className="absolute -top-2 -right-2 bg-red-100 text-red-600 rounded-full p-1.5 shadow-sm hover:bg-red-500 hover:text-white transition-colors"><Trash2 size={12} /></button>
                 </div>
               ))}
