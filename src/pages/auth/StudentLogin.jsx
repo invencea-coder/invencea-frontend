@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 
 // Import your custom hooks and API functions
 import { useAuth } from '../../hooks/useAuth.js'; 
-import { studentLogin } from '../../api/authAPI.js'; // Using your API service!
+import { studentLogin } from '../../api/authAPI.js'; 
 
 // UI Components
 import NeumorphCard from '../../components/ui/NeumorphCard.jsx';
@@ -17,12 +17,11 @@ export default function StudentLogin() {
   const navigate = useNavigate();
   const { login } = useAuth(); 
   
-  // Updated state to match your API parameters
+  // State only requires ID and PIN now
   const [formData, setFormData] = useState({ student_id: '', pin: '' });
   const [loading, setLoading] = useState(false);
 
   const handleChange = (field, value) => {
-    // If it's the PIN, restrict it to numbers only and max 4 digits
     if (field === 'pin') {
       const onlyNums = value.replace(/\D/g, '');
       if (onlyNums.length <= 4) {
@@ -38,7 +37,7 @@ export default function StudentLogin() {
 
     if (!formData.student_id.trim() || !formData.pin.trim()) {
       return toast.error('Please enter your Student ID and PIN.');
-  }
+    }
     
     if (formData.pin.length !== 4) {
       return toast.error('PIN must be exactly 4 digits.');
@@ -46,15 +45,12 @@ export default function StudentLogin() {
 
     setLoading(true);
     try {
-      // Use your dedicated API function
       const res = await studentLogin(formData.student_id, formData.pin);
-      // Extract the token and user data from your backend response
       const token = res.data?.token || res.data?.data?.token;
       const userData = res.data?.user || res.data?.data?.user || res.data?.data;
 
       if (!token) throw new Error("No token received from server");
 
-      // Pass the token and user to your AuthContext to establish the session
       await login(token, userData); 
       
       toast.success('Login successful!');
@@ -91,25 +87,19 @@ export default function StudentLogin() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
-            <NeumorphInput 
-              label="Full Name" 
-              type="text" 
-              placeholder="e.g., Juan Dela Cruz" 
-              value={formData.full_name} 
-              onChange={e => handleChange('full_name', e.target.value)} 
-              autoFocus 
-            />
             
+            {/* ONLY Student ID and PIN inputs remain! */}
             <NeumorphInput 
               label="Student ID" 
               type="text" 
               placeholder="e.g., 2021-0001" 
               value={formData.student_id} 
               onChange={e => handleChange('student_id', e.target.value)} 
+              autoFocus /* Moved autoFocus here so they can start typing immediately */
             />
 
             <NeumorphInput 
-              label="4-Digit Security PIN(default: 1234)" 
+              label="4-Digit Security PIN (default: 1234)" 
               type="password" 
               inputMode="numeric"
               placeholder="••••" 
