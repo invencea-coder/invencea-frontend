@@ -1,3 +1,4 @@
+// src/pages/faculty/FacultyDashboard.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PlusCircle, FileText, Clock } from 'lucide-react';
@@ -14,9 +15,16 @@ export default function FacultyDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    listRequests({}).then(r => setRequests(r.data.data)).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+    // FIX: Only fetch if we have a user, and filter by their ID
+    if (user?.id) {
+      listRequests({ user_id: user.id })
+        .then(r => setRequests(r.data.data))
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }
+  }, [user]); // Added user to the dependency array
 
+  // Because 'requests' is now filtered, these counts will also be personalized!
   const pending = requests.filter(r => r.status === 'PENDING').length;
   const issued  = requests.filter(r => r.status === 'ISSUED').length;
 
