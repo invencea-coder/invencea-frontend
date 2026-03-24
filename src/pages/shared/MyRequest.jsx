@@ -20,11 +20,11 @@ export default function MyRequests() {
   useEffect(() => {
     if (user?.id) {
       listRequests({ user_id: user.id })
-        .then(r => setRequests(r.data.data))
+        .then(r => setRequests(r.data.data ?? r.data ?? []))
         .catch(() => toast.error('Failed to load request history'))
         .finally(() => setLoading(false));
     }
-  }, [user]);
+  }, [user?.id]);
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6 animate-fade-in">
@@ -47,8 +47,8 @@ export default function MyRequests() {
         ) : (
           <div className="divide-y divide-black/5">
             {requests.map(req => (
-              <div 
-                key={req.id} 
+              <div
+                key={req.id}
                 onClick={() => setSelectedRequest(req)}
                 className="p-4 hover:bg-black/[0.01] transition-colors cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-4"
               >
@@ -82,7 +82,7 @@ export default function MyRequests() {
       <NeumorphModal open={!!selectedRequest} onClose={() => setSelectedRequest(null)} title={`Request Details #${selectedRequest?.id}`}>
         {selectedRequest && (
           <div className="space-y-6 mt-4 p-2">
-            
+
             <div className="flex justify-between items-center bg-black/[0.02] p-4 rounded-xl border border-black/5">
               <span className="text-muted font-bold text-sm uppercase tracking-wider flex items-center gap-2">
                 <Clock size={16}/> Status
@@ -100,7 +100,7 @@ export default function MyRequests() {
                 {selectedRequest.items?.map((item, idx) => {
                   const isReturned = item.status === 'RETURNED';
                   const displayAssignee = (item.assigned_to === 'Shared Group' || item.assigned_to === 'Shared') ? 'Requester' : item.assigned_to;
-                  
+
                   return (
                     <div key={idx} className={`flex justify-between items-center p-3 rounded-xl border transition-colors ${isReturned ? 'bg-emerald-50 border-emerald-100' : 'bg-black/[0.02] border-black/5'}`}>
                       <div className="flex items-center gap-3">
@@ -120,12 +120,11 @@ export default function MyRequests() {
                         x{item.quantity}
                       </span>
                     </div>
-                  )
+                  );
                 })}
               </div>
             </div>
 
-            {/* Show QR Code if it's Pending or Approved so they can scan it at the desk */}
             {['PENDING', 'APPROVED'].includes(selectedRequest.status) && selectedRequest.qr_code && (
               <div className="mt-6 flex flex-col items-center justify-center p-6 border-2 border-dashed border-black/10 rounded-2xl bg-black/[0.02]">
                 <p className="text-xs font-bold text-muted uppercase tracking-widest mb-4">Your Request QR Code</p>
@@ -137,7 +136,7 @@ export default function MyRequests() {
             )}
 
             <div className="pt-4 border-t border-black/5 flex justify-end">
-               <NeumorphButton variant="outline" onClick={() => setSelectedRequest(null)}>Close</NeumorphButton>
+              <NeumorphButton variant="outline" onClick={() => setSelectedRequest(null)}>Close</NeumorphButton>
             </div>
           </div>
         )}
