@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
   Search, Plus, Trash2, Calendar, Clock, Users, ArrowRight,
-  MapPin, CheckCircle2, AlertTriangle, X, DoorClosed, Package, Layers, FlaskConical
+  MapPin, CheckCircle2, AlertTriangle, X, DoorClosed, Package, Layers
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
@@ -14,9 +14,7 @@ import { createRequest } from '../../api/requestAPI';
 import NeumorphCard from '../../components/ui/NeumorphCard';
 import NeumorphButton from '../../components/ui/NeumorphButton';
 import NeumorphInput from '../../components/ui/NeumorphInput';
-
-// NEW: Import the Lab Session component Claude provided
-import JoinLabSession from '../../components/kiosk/JoinLabSession'; 
+import ScheduleWidget from '../../components/shared/ScheduleWidget';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:4000';
 
@@ -34,7 +32,7 @@ export default function NewRequest() {
   const [refreshTrigger, setRefreshTrigger]     = useState(0);
   const [cart, setCart]                         = useState([]);
   
-  // Companions
+  // Companions (Only used for Students now)
   const [companions, setCompanions]             = useState([]);
   
   // Purpose State
@@ -48,13 +46,11 @@ export default function NewRequest() {
   const [successData, setSuccessData]           = useState(null);
   const [confirmClose, setConfirmClose]         = useState(false);
 
-  // NEW: State to control the Lab Session Modal
-  const [showJoinLab, setShowJoinLab]           = useState(false);
-
   // 1. Rooms + sockets
   useEffect(() => {
+    // FIX: Try fetching from the public/shared /rooms route first so students/faculty aren't blocked by admin middleware
     api.get('/rooms')
-      .catch(() => api.get('/admin/rooms')) 
+      .catch(() => api.get('/admin/rooms')) // Fallback just in case
       .then(res => setAvailableRooms(res.data?.data || res.data || []))
       .catch(() => toast.error('Could not load department rooms'));
 
@@ -101,6 +97,7 @@ export default function NewRequest() {
       const freshInventory = [...unitItems, ...consumables, ...qtyItems];
       setInventory(freshInventory);
 
+      // Cart auto-correction
       setCart(prevCart => {
         let modified = false;
         const updated = prevCart.map(cartItem => {
@@ -239,6 +236,7 @@ export default function NewRequest() {
             assigned_to: c.assigned_to,
           };
         }),
+        // FIX: Completely ignore companions if user is Faculty
         companions: isFaculty ? [] : companions
           .filter(c => c.name && c.student_id)
           .map(c => ({ 
@@ -361,6 +359,7 @@ export default function NewRequest() {
           </div>
         </div>
 
+        {/* Hide Assignment if no companions exist (which is always true for Faculty now) */}
         {!isFaculty && companions.length > 0 && (
           <div className="flex items-center gap-2 mt-2 pt-2 border-t border-black/5">
             <span className="text-[10px] uppercase text-muted font-bold tracking-wider">Assign to:</span>
@@ -387,27 +386,6 @@ export default function NewRequest() {
         </p>
       </div>
 
-      {/* NEW: LAB SESSION BANNER FOR STUDENTS */}
-      {!isFaculty && (
-        <NeumorphCard className="p-4 bg-violet-50/80 border border-violet-100 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4">
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="w-12 h-12 bg-violet-100 text-violet-600 rounded-full flex items-center justify-center shrink-0">
-              <FlaskConical size={24} />
-            </div>
-            <div>
-              <h3 className="font-bold text-violet-900 text-base">Attending a Lab Session?</h3>
-              <p className="text-xs text-violet-700 mt-0.5">Skip the cart! Join directly using your instructor's 6-digit code.</p>
-            </div>
-          </div>
-          <NeumorphButton 
-            onClick={() => setShowJoinLab(true)}
-            className="bg-violet-600 text-white hover:bg-violet-700 py-2.5 px-6 w-full sm:w-auto shadow-md shadow-violet-200"
-          >
-            Enter Lab Code
-          </NeumorphButton>
-        </NeumorphCard>
-      )}
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* LEFT: Inventory Browser */}
         <NeumorphCard className="p-0 overflow-hidden flex flex-col h-[650px]">
@@ -428,6 +406,13 @@ export default function NewRequest() {
               ))}
             </select>
           </div>
+          {/* NEW: Instantly inject the compact schedule right here! */}
+        <div className="p-4 bg-black/[0.02] border-b border-primary/5">
+          <ScheduleWidget roomId={selectedRoomId} />
+        </div>
+
+        {/* The existing inventory search block continues below... */}
+        <div className="flex-1 flex flex-col p-4 relative bg-surface/50"></div>
 
           <div className="flex-1 flex flex-col p-4 relative bg-surface/50">
             {isRoomClosed ? (
@@ -496,7 +481,7 @@ export default function NewRequest() {
                   value={purpose}
                   onChange={e => {
                     setPurpose(e.target.value);
-                    if (e.target.value !== 'Other') setCustomPurpose(''); 
+                    if (e.target.value !== 'Other') setCustomPurpose(''); // Clear custom input if they switch
                   }}
                 >
                   <option value="" disabled>-- Select Purpose --</option>
@@ -511,6 +496,7 @@ export default function NewRequest() {
                 </select>
               </div>
 
+              {/* Show text input ONLY if 'Other' is selected */}
               {purpose === 'Other' && (
                 <div className="animate-fade-in">
                   <NeumorphInput 
@@ -542,6 +528,7 @@ export default function NewRequest() {
             )}
           </NeumorphCard>
 
+          {/* FIX: Companions section is now completely hidden for Faculty */}
           {!isFaculty && (
             <NeumorphCard className="p-5 space-y-4">
               <div className="flex justify-between items-center">
@@ -577,21 +564,6 @@ export default function NewRequest() {
           </NeumorphCard>
         </div>
       </div>
-
-      {/* NEW: Join Lab Session Modal Overlay */}
-      {showJoinLab && (
-        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="relative w-full max-w-md">
-            <button 
-              onClick={() => setShowJoinLab(false)} 
-              className="absolute -top-12 right-0 bg-white/10 hover:bg-white/20 text-white rounded-full p-2 backdrop-blur-md transition-all"
-            >
-              <X size={24} />
-            </button>
-            <JoinLabSession onClose={() => setShowJoinLab(false)} />
-          </div>
-        </div>
-      )}
 
       {/* Success / QR Modal */}
       {successData && (
