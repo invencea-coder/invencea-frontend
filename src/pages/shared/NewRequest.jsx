@@ -142,7 +142,7 @@ export default function NewRequest() {
       setInventory(fresh);
 
       setCart(prev => prev.map(c => {
-        const f = fresh.find(i => i.kind === c.kind && i.inventory_type_id === c.inventory_type_id && i.stock_id === c.stock_id);
+        const f = fresh.find(i => i.kind === c.kind && i.inventory_type_id === c.inventory_type_id && (i.stock_id || i.id) === (c.stock_id || c.id));
         if (!f) return null;
         if (c.req_qty > f._avail) return { ...c, req_qty: f._avail };
         return c;
@@ -171,11 +171,12 @@ export default function NewRequest() {
     toast.success(`Date pre-filled: ${dateStr}`, { icon: '📅', duration: 2000 });
   }, []);
 
+  // ⚡ BULLETPROOF CART LOGIC
   const addToCart = item => {
     if (isRoomClosed || item._avail <= 0) return;
-    const ex = cart.find(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && c.stock_id === item.stock_id);
+    const ex = cart.find(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id));
     if (ex) {
-      if (ex.req_qty >= item._avail) return toast.error(`Only ${item._avail} units available.`);
+      if (ex.req_qty >= item._avail) return toast.error(`Stock limit reached: Only ${item._avail} available.`);
       setCart(cart.map(c => c === ex ? { ...c, req_qty: c.req_qty + 1 } : c));
       toast.success(`Increased ${item.name} quantity`);
     } else {
@@ -187,11 +188,19 @@ export default function NewRequest() {
   const updateCartField = (val, item) => {
     const qty = parseInt(val) || 0;
     if (qty <= 0) { removeFromCart(item); return; }
-    setCart(cart.map(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && c.stock_id === item.stock_id ? { ...c, req_qty: Math.min(qty, item._avail) } : c));
+    
+    // Warn user if they try to type a number higher than stock
+    if (qty > item._avail) {
+      toast.error(`Stock limit reached: Only ${item._avail} available right now!`, { id: `stock-warn` });
+    }
+    
+    setCart(cart.map(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id) 
+      ? { ...c, req_qty: Math.min(qty, item._avail) } 
+      : c));
   };
 
   const removeFromCart = item => {
-    setCart(cart.filter(c => !(c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && c.stock_id === item.stock_id)));
+    setCart(cart.filter(c => !(c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id))));
   };
 
   const pickupWindow = useMemo(() => {
@@ -225,12 +234,18 @@ export default function NewRequest() {
     try {
       const payload = {
         room_id: selectedRoomId, purpose: finalPurpose, email,
+        // ⚡ FIX: Extremely safe payload mapping guaranteeing both qty names and fallback IDs
         items: cart.map(c => {
-          if (c.inventory_mode === 'quantity') return { inventory_type_id: c.inventory_type_id, stock_id: c.stock_id, qty_requested: c.req_qty };
-          if (c.kind === 'consumable') return { inventory_type_id: c.inventory_type_id, consumable_id: c.id || c.item_id, quantity: c.req_qty };
-          return { inventory_type_id: c.inventory_type_id, quantity: c.req_qty };
+          if (c.inventory_mode === 'quantity') {
+            return { inventory_type_id: c.inventory_type_id, stock_id: c.stock_id || c.id, qty_requested: c.req_qty, quantity: c.req_qty };
+          }
+          if (c.kind === 'consumable') {
+            return { inventory_type_id: c.inventory_type_id, consumable_id: c.consumable_id || c.id || c.item_id, quantity: c.req_qty, qty_requested: c.req_qty };
+          }
+          return { inventory_type_id: c.inventory_type_id, quantity: c.req_qty, qty_requested: c.req_qty };
         }),
       };
+      
       if (resType === 'slot')  payload.pickup_datetime = `${pickupDate}T${pickupTime}:00+08:00`;
       if (resType === 'range') { payload.pickup_start = `${rangeStart}T08:00:00+08:00`; payload.pickup_end = `${rangeEnd}T22:00:00+08:00`; }
       
@@ -253,7 +268,7 @@ export default function NewRequest() {
   const InvRow = ({ item }) => {
     const badge  = item.inventory_mode === 'quantity' ? { cls: 'bg-violet-100 text-violet-700', label: 'Batch' } : item.kind === 'consumable' ? { cls: 'bg-amber-100 text-amber-700', label: 'Consumable' } : { cls: 'bg-blue-100 text-blue-700', label: 'Unit' };
     const sub    = `${item._avail} avail / ${item._total} total`;
-    const inCart = cart.some(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && c.stock_id === item.stock_id);
+    const inCart = cart.some(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id));
     const disabled = item._avail <= 0;
     const meta = parseMeta(item.type_metadata || item.metadata);
 

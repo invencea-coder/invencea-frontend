@@ -32,8 +32,9 @@ export default function MyRequests() {
 
   useEffect(() => {
     if (user?.id) {
+      // Changed requester_id back to user_id to fix the 400 error!
       listRequests({ user_id: user.id })
-        .then(r => setRequests(r.data.data ?? r.data ?? []))
+        .then(r => setRequests(r.data?.data ?? r.data ?? []))
         .catch(() => toast.error('Failed to load request history'))
         .finally(() => setLoading(false));
     }
