@@ -7,7 +7,6 @@ import { listRequests } from '../../api/requestAPI.js';
 import { fmtDateTime } from '../../utils/date.js';
 import { QRCodeSVG } from 'qrcode.react';
 
-// Status Badge Component
 const StatusBadge = ({ status }) => {
   const colors = {
     'PENDING':            'bg-amber-50 text-amber-800 border-amber-200',
@@ -29,11 +28,10 @@ export default function MyRequest() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedRequest, setSelectedRequest] = useState(null);
-  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'history'
+  const [activeTab, setActiveTab] = useState('active');
 
   useEffect(() => {
     if (user?.id) {
-      // ⚡ Fetch only this specific faculty's requests
       listRequests({ requester_id: user.id })
         .then(r => setRequests(r.data?.data ?? r.data ?? []))
         .catch(() => toast.error('Failed to load request history'))
@@ -41,24 +39,21 @@ export default function MyRequest() {
     }
   }, [user?.id]);
 
-  // ─── Filter rules ────────────────────────────────────────────────────────────
-  const activeRequests = useMemo(() => {
-    return requests.filter(r => 
-      ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'PARTIALLY RETURNED'].includes(r.status)
-    );
-  }, [requests]);
-
-  const historyRequests = useMemo(() => {
-    return requests.filter(r => 
-      ['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED'].includes(r.status)
-    );
-  }, [requests]);
-
+  const activeRequests = useMemo(() => requests.filter(r => ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'PARTIALLY RETURNED'].includes(r.status)), [requests]);
+  const historyRequests = useMemo(() => requests.filter(r => ['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED'].includes(r.status)), [requests]);
   const displayedRequests = activeTab === 'active' ? activeRequests : historyRequests;
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] bg-[#e0e5ec] dark:bg-darkSurface p-4 md:p-8">
-      <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in zoom-in-95 duration-500">
+    <div className="min-h-[calc(100vh-4rem)] relative bg-slate-50 dark:bg-darkSurface p-4 md:p-8 overflow-x-hidden z-0">
+      
+      {/* ⚡ PREMIUM GLASSMORPHISM BACKGROUND BLOBS ⚡ */}
+      <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden">
+        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px]" />
+        <div className="absolute top-[40%] -right-[10%] w-[40%] h-[40%] rounded-full bg-blue-400/10 blur-[100px]" />
+        <div className="absolute -bottom-[10%] left-[20%] w-[40%] h-[40%] rounded-full bg-emerald-400/10 blur-[100px]" />
+      </div>
+
+      <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in zoom-in-95 duration-500 relative z-10">
         
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
@@ -85,7 +80,7 @@ export default function MyRequest() {
         </div>
 
         {/* List Container */}
-        <div className="bg-white/80 backdrop-blur-md rounded-3xl shadow-sm border border-black/5 overflow-hidden">
+        <div className="bg-white/70 backdrop-blur-xl rounded-3xl shadow-sm border border-white/50 overflow-hidden">
           {loading ? (
             <div className="flex h-64 items-center justify-center"><Loader2 className="animate-spin text-primary/50" size={40}/></div>
           ) : displayedRequests.length === 0 ? (
@@ -104,10 +99,10 @@ export default function MyRequest() {
                 <div
                   key={req.id}
                   onClick={() => setSelectedRequest(req)}
-                  className="p-5 hover:bg-primary/5 transition-colors cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-4"
+                  className="p-5 hover:bg-white/60 transition-colors cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-4"
                 >
                   <div className="flex items-start gap-4">
-                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner flex-shrink-0 bg-gray-50 border border-black/5 text-gray-500 group-hover:scale-105 group-hover:bg-white group-hover:text-primary transition-all">
+                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner flex-shrink-0 bg-white border border-black/5 text-gray-500 group-hover:scale-105 group-hover:text-primary transition-all">
                       {req.status === 'RETURNED' ? <CheckCircle2 size={24} className="text-emerald-500" /> : <Package size={24} />}
                     </div>
                     <div>
@@ -127,7 +122,7 @@ export default function MyRequest() {
                       <p className="text-[10px] text-gray-400 uppercase tracking-widest font-black mb-0.5">Items</p>
                       <p className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-lg">{req.items?.length || 0} borrowed</p>
                     </div>
-                    <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+                    <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center group-hover:bg-primary/10 border border-black/5 transition-colors">
                       <ChevronRight size={20} className="text-gray-400 group-hover:text-primary transition-colors" />
                     </div>
                   </div>
@@ -140,10 +135,9 @@ export default function MyRequest() {
         {/* --- Request Details Modal --- */}
         {selectedRequest && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-white w-full max-w-lg relative overflow-hidden rounded-3xl border border-black/5 shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
+            <div className="bg-white/90 backdrop-blur-2xl w-full max-w-lg relative overflow-hidden rounded-3xl border border-white/50 shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
               
-              {/* Modal Header */}
-              <div className="bg-gray-50 p-6 border-b border-black/5 flex justify-between items-center flex-shrink-0">
+              <div className="bg-white/50 p-6 border-b border-black/5 flex justify-between items-center flex-shrink-0">
                 <div>
                   <h3 className="font-black text-gray-800 text-xl tracking-tight">#{selectedRequest.id}</h3>
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-0.5">{selectedRequest.purpose || 'General Request'}</p>
@@ -153,7 +147,6 @@ export default function MyRequest() {
                 </button>
               </div>
 
-              {/* Modal Body */}
               <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
                 
                 <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-black/5 shadow-sm">
@@ -197,7 +190,7 @@ export default function MyRequest() {
                 </div>
 
                 {['PENDING', 'APPROVED'].includes(selectedRequest.status) && selectedRequest.qr_code && (
-                  <div className="mt-6 flex flex-col items-center justify-center p-6 border-2 border-dashed border-black/10 rounded-3xl bg-gray-50/50 relative overflow-hidden group">
+                  <div className="mt-6 flex flex-col items-center justify-center p-6 border-2 border-dashed border-black/10 rounded-3xl bg-white/50 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-primary/5 rounded-full blur-3xl pointer-events-none group-hover:bg-primary/10 transition-colors" />
                     <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 relative z-10">Your Request QR Code</p>
                     <div className="p-3 bg-white rounded-2xl shadow-sm border border-black/5 relative z-10 group-hover:scale-105 transition-transform duration-300">
@@ -210,8 +203,7 @@ export default function MyRequest() {
                 )}
               </div>
 
-              {/* Modal Footer */}
-              <div className="p-4 border-t border-black/5 flex-shrink-0 bg-white">
+              <div className="p-4 border-t border-black/5 flex-shrink-0 bg-white/50">
                 <button onClick={() => setSelectedRequest(null)} className="w-full bg-primary hover:bg-primary/90 text-white py-4 rounded-2xl font-black tracking-wide shadow-md shadow-primary/20 transition-all">
                   Close Details
                 </button>

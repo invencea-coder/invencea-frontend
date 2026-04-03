@@ -54,11 +54,19 @@ export default function FacultyDashboard() {
   const issued  = requests.filter(r => ['ISSUED', 'PARTIALLY RETURNED'].includes(r.status)).length;
 
   return (
-    <div className="min-h-screen bg-[#e0e5ec] dark:bg-darkSurface p-4 md:p-8">
-      <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in zoom-in-95 duration-500">
+    <div className="min-h-[calc(100vh-4rem)] relative bg-slate-50 dark:bg-darkSurface p-4 md:p-8 overflow-x-hidden z-0">
+      
+      {/* ⚡ PREMIUM GLASSMORPHISM BACKGROUND BLOBS ⚡ */}
+      <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden">
+        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px]" />
+        <div className="absolute top-[40%] -right-[10%] w-[40%] h-[40%] rounded-full bg-blue-400/10 blur-[100px]" />
+        <div className="absolute -bottom-[10%] left-[20%] w-[40%] h-[40%] rounded-full bg-emerald-400/10 blur-[100px]" />
+      </div>
+
+      <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in zoom-in-95 duration-500 relative z-10">
         
         {/* Header */}
-        <div className="bg-white/80 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-black/5 flex flex-col md:flex-row justify-between gap-4">
+        <div className="bg-white/70 backdrop-blur-xl p-6 rounded-3xl shadow-sm border border-white/50 flex flex-col md:flex-row justify-between gap-4">
           <div>
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Welcome back</p>
             <h2 className="font-display text-3xl font-black text-gray-800 tracking-tight">{user?.name}</h2>
@@ -71,11 +79,11 @@ export default function FacultyDashboard() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white/80 backdrop-blur-md border border-black/5 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm">
+          <div className="bg-white/70 backdrop-blur-xl border border-white/50 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-shadow">
             <p className="text-4xl font-black text-amber-500">{pending}</p>
             <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-2">Pending</p>
           </div>
-          <div className="bg-white/80 backdrop-blur-md border border-black/5 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm">
+          <div className="bg-white/70 backdrop-blur-xl border border-white/50 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-shadow">
             <p className="text-4xl font-black text-emerald-500">{issued}</p>
             <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-2">Issued</p>
           </div>
@@ -85,7 +93,7 @@ export default function FacultyDashboard() {
         <div className="grid grid-cols-2 gap-4">
           <button 
             onClick={() => navigate('/faculty/new-request')}
-            className="group bg-gradient-to-br from-primary to-primary/90 p-6 rounded-3xl shadow-md shadow-primary/20 flex flex-col items-center gap-3 hover:-translate-y-1 transition-all duration-300"
+            className="group bg-gradient-to-br from-primary to-primary/90 p-6 rounded-3xl shadow-md shadow-primary/20 flex flex-col items-center gap-3 hover:-translate-y-1 hover:shadow-lg transition-all duration-300"
           >
             <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center text-white group-hover:scale-110 transition-transform">
               <PlusCircle size={24} />
@@ -95,7 +103,7 @@ export default function FacultyDashboard() {
 
           <button 
             onClick={() => navigate('/faculty/my-requests')}
-            className="group bg-white/80 backdrop-blur-md border border-black/5 p-6 rounded-3xl shadow-sm flex flex-col items-center gap-3 hover:-translate-y-1 hover:shadow-md transition-all duration-300"
+            className="group bg-white/70 backdrop-blur-xl border border-white/50 p-6 rounded-3xl shadow-sm flex flex-col items-center gap-3 hover:-translate-y-1 hover:shadow-md transition-all duration-300"
           >
             <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-gray-500 group-hover:scale-110 group-hover:bg-primary/10 group-hover:text-primary transition-all">
               <FileText size={24} />
@@ -105,7 +113,7 @@ export default function FacultyDashboard() {
         </div>
 
         {/* Recent Requests */}
-        <div className="bg-white/80 backdrop-blur-md border border-black/5 rounded-3xl p-6 shadow-sm">
+        <div className="bg-white/70 backdrop-blur-xl border border-white/50 rounded-3xl p-6 shadow-sm">
           <div className="flex items-center gap-2 mb-5">
             <Clock size={16} className="text-primary" />
             <h3 className="font-black text-gray-800 uppercase tracking-widest text-xs">Recent History</h3>
@@ -121,7 +129,7 @@ export default function FacultyDashboard() {
           ) : (
             <div className="flex flex-col gap-3">
               {requests.slice(0, 5).map(r => (
-                <div key={r.id} className="flex items-center justify-between bg-gray-50 border border-black/5 rounded-2xl p-4 transition-colors hover:border-primary/30">
+                <div key={r.id} className="flex items-center justify-between bg-white/50 border border-black/5 rounded-2xl p-4 transition-colors hover:border-primary/30 hover:bg-white/80">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
                       <p className="text-xs font-black text-gray-800">#{r.id}</p>
