@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mail, ArrowLeft, Send } from 'lucide-react';
+import { BookOpen, Mail, ArrowLeft, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { sendOTP } from '../../api/authAPI.js';
 import NeumorphInput from '../../components/ui/NeumorphInput.jsx';
@@ -30,23 +30,28 @@ export default function FacultyLogin() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-surface dark:bg-darkSurface px-4">
-      <div className="w-full max-w-sm animate-slide-up">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#e0e5ec] dark:bg-darkSurface px-4 py-8">
+      <div className="animate-in fade-in zoom-in-95 duration-500 w-full max-w-[400px]">
         <button
           onClick={() => navigate('/')}
-          className="flex items-center gap-1.5 text-xs text-muted hover:text-primary dark:hover:text-darkText mb-6 transition-colors"
+          className="flex items-center gap-1.5 text-xs font-bold text-gray-400 hover:text-primary mb-6 transition-colors"
         >
-          <ArrowLeft size={13} /> Back
+          <ArrowLeft size={14} /> Back to Selection
         </button>
 
-        <div className="neu-card-lg p-8">
-          <div className="neu-card-sm w-12 h-12 flex items-center justify-center mb-5">
-            <Mail size={22} className="text-primary dark:text-darkText" />
+        <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-black/5 relative overflow-hidden">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-blue-400/10 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-gradient-to-br from-info/10 to-primary/5 mb-6 shadow-inner mx-auto relative z-10">
+            <BookOpen size={28} className="text-primary" />
           </div>
-          <h2 className="font-display text-2xl font-bold text-primary dark:text-darkText">Faculty Login</h2>
-          <p className="text-sm text-muted dark:text-darkMuted mt-1 mb-6">Enter your Gmail to receive an OTP.</p>
+          
+          <div className="text-center mb-8 relative z-10">
+            <h2 className="font-display text-2xl font-black text-gray-900 tracking-tight">Faculty Login</h2>
+            <p className="text-sm font-medium text-gray-500 mt-1">Enter your Gmail to receive an OTP.</p>
+          </div>
 
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4 relative z-10">
             <NeumorphInput
               label="Gmail Address"
               id="email"
@@ -59,16 +64,16 @@ export default function FacultyLogin() {
               autoComplete="email"
               autoFocus
             />
-            <NeumorphButton
-              type="submit"
-              variant="primary"
-              size="lg"
-              loading={loading}
-              icon={<Send size={15} />}
-              className="w-full justify-center mt-1"
-            >
-              Send OTP
-            </NeumorphButton>
+            <div className="pt-2">
+              <NeumorphButton
+                type="submit"
+                variant="primary"
+                loading={loading}
+                className="w-full py-3.5 flex justify-center items-center gap-2 text-base font-black rounded-xl shadow-md shadow-primary/20"
+              >
+                {!loading && <Send size={16} />} Send OTP
+              </NeumorphButton>
+            </div>
           </form>
         </div>
       </div>

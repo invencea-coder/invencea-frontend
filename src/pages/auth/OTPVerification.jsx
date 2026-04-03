@@ -20,10 +20,8 @@ export default function OTPVerification() {
   const [resending, setResending] = useState(false);
   const inputs = useRef([]);
 
-  // Redirect if no email
   useEffect(() => { if (!email) navigate('/login/faculty'); }, [email]);
 
-  // Countdown timer
   useEffect(() => {
     if (timeLeft <= 0) return;
     const t = setInterval(() => setTimeLeft((p) => p - 1), 1000);
@@ -93,29 +91,30 @@ export default function OTPVerification() {
   const progress = (timeLeft / OTP_SECONDS) * circumference;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-surface dark:bg-darkSurface px-4">
-      <div className="w-full max-w-sm animate-slide-up">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#e0e5ec] dark:bg-darkSurface px-4 py-8">
+      <div className="animate-in fade-in zoom-in-95 duration-500 w-full max-w-[400px]">
         <button
           onClick={() => navigate('/login/faculty')}
-          className="flex items-center gap-1.5 text-xs text-muted hover:text-primary dark:hover:text-darkText mb-6 transition-colors"
+          className="flex items-center gap-1.5 text-xs font-bold text-gray-400 hover:text-primary mb-6 transition-colors"
         >
-          <ArrowLeft size={13} /> Back
+          <ArrowLeft size={14} /> Back to Email
         </button>
 
-        <div className="neu-card-lg p-8">
-          <h2 className="font-display text-2xl font-bold text-primary dark:text-darkText">Verify OTP</h2>
-          <p className="text-sm text-muted dark:text-darkMuted mt-1 mb-1">
-            Code sent to <span className="font-medium text-primary dark:text-darkText">{email}</span>
+        <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-black/5 text-center relative overflow-hidden">
+          
+          <h2 className="font-display text-2xl font-black text-gray-900 tracking-tight">Verify OTP</h2>
+          <p className="text-sm font-medium text-gray-500 mt-2">
+            Code sent to <span className="font-bold text-primary">{email}</span>
           </p>
 
           {/* Circular countdown */}
-          <div className="flex justify-center my-6">
+          <div className="flex justify-center my-8">
             <div className="relative w-20 h-20">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 64 64">
-                <circle cx="32" cy="32" r="28" fill="none" stroke="#E8D5D5" strokeWidth="4" />
+                <circle cx="32" cy="32" r="28" fill="none" stroke="#f3f4f6" strokeWidth="4" />
                 <circle
                   cx="32" cy="32" r="28" fill="none"
-                  stroke={expired ? '#E8D5D5' : '#4A0000'}
+                  stroke={expired ? '#f3f4f6' : '#1e3a8a'}
                   strokeWidth="4"
                   strokeLinecap="round"
                   strokeDasharray={circumference}
@@ -124,7 +123,7 @@ export default function OTPVerification() {
                 />
               </svg>
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className={`font-mono text-sm font-bold ${expired ? 'text-muted' : 'text-primary dark:text-darkText'}`}>
+                <span className={`font-mono text-sm font-black tracking-widest ${expired ? 'text-gray-400' : 'text-primary'}`}>
                   {expired ? '0:00' : `${mins}:${secs}`}
                 </span>
               </div>
@@ -132,7 +131,7 @@ export default function OTPVerification() {
           </div>
 
           {/* OTP inputs */}
-          <div className="flex gap-2 justify-center mb-6" onPaste={handlePaste}>
+          <div className="flex gap-2 justify-center mb-8" onPaste={handlePaste}>
             {digits.map((d, i) => (
               <input
                 key={i}
@@ -145,29 +144,26 @@ export default function OTPVerification() {
                 onChange={(e) => handleDigit(i, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(i, e)}
                 disabled={expired}
-                className="otp-input"
+                className="w-12 h-14 text-center text-xl font-black bg-gray-50 border border-gray-200 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 focus:bg-white transition-all disabled:opacity-50"
               />
             ))}
           </div>
 
           {expired ? (
             <NeumorphButton
-              variant="default"
-              size="lg"
-              icon={<RefreshCw size={15} />}
+              variant="outline"
               loading={resending}
               onClick={handleResend}
-              className="w-full justify-center"
+              className="w-full py-3.5 flex justify-center items-center gap-2 text-base font-black rounded-xl text-gray-700 bg-gray-50 border border-gray-200 hover:bg-gray-100"
             >
-              Resend OTP
+              {!resending && <RefreshCw size={16} />} Resend OTP
             </NeumorphButton>
           ) : (
             <NeumorphButton
               variant="primary"
-              size="lg"
               loading={loading}
               onClick={handleVerify}
-              className="w-full justify-center"
+              className="w-full py-3.5 flex justify-center items-center gap-2 text-base font-black rounded-xl shadow-md shadow-primary/20"
               disabled={digits.join('').length < 6}
             >
               Verify & Login
@@ -175,9 +171,9 @@ export default function OTPVerification() {
           )}
 
           {!expired && (
-            <p className="text-center text-xs text-muted dark:text-darkMuted mt-3">
+            <p className="text-center text-xs font-medium text-gray-500 mt-4">
               Didn't receive it?{' '}
-              <button onClick={handleResend} className="text-primary dark:text-darkText font-medium hover:underline">
+              <button onClick={handleResend} className="text-primary font-bold hover:underline">
                 Resend
               </button>
             </p>

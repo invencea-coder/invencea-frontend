@@ -1,5 +1,5 @@
 // src/pages/shared/MyRequests.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Package, Clock, CheckCircle2, FileText, ChevronRight, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../hooks/useAuth';
@@ -16,6 +16,7 @@ export default function MyRequests() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedRequest, setSelectedRequest] = useState(null);
+  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'history'
 
   useEffect(() => {
     if (user?.id) {
@@ -26,6 +27,22 @@ export default function MyRequests() {
     }
   }, [user?.id]);
 
+  // ─── SPEC FIX: Filter rules ──────────────────────────────────────────────────
+  // ISSUED is completely omitted from these lists (only visible on Calendar)
+  const activeRequests = useMemo(() => {
+    return requests.filter(r => 
+      ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'PARTIALLY RETURNED'].includes(r.status)
+    );
+  }, [requests]);
+
+  const historyRequests = useMemo(() => {
+    return requests.filter(r => 
+      ['RETURNED', 'REJECTED', 'CANCELLED'].includes(r.status)
+    );
+  }, [requests]);
+
+  const displayedRequests = activeTab === 'active' ? activeRequests : historyRequests;
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6 animate-fade-in">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
@@ -35,18 +52,38 @@ export default function MyRequests() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-6 border-b border-black/10 px-2">
+        <button 
+          onClick={() => setActiveTab('active')} 
+          className={`pb-3 text-sm font-bold tracking-wide transition-all ${activeTab === 'active' ? 'text-primary border-b-2 border-primary' : 'text-muted hover:text-gray-700'}`}
+        >
+          Active Requests
+        </button>
+        <button 
+          onClick={() => setActiveTab('history')} 
+          className={`pb-3 text-sm font-bold tracking-wide transition-all ${activeTab === 'history' ? 'text-primary border-b-2 border-primary' : 'text-muted hover:text-gray-700'}`}
+        >
+          History
+        </button>
+      </div>
+
       <NeumorphCard className="p-0 overflow-hidden">
         {loading ? (
           <div className="flex h-64 items-center justify-center"><Loader2 className="animate-spin text-primary" size={32}/></div>
-        ) : requests.length === 0 ? (
+        ) : displayedRequests.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-12 text-center text-muted">
             <FileText size={48} className="mb-4 opacity-20" />
-            <p className="text-lg font-bold text-gray-700 mb-1">No Requests Found</p>
-            <p className="text-sm">You haven't made any equipment requests yet.</p>
+            <p className="text-lg font-bold text-gray-700 mb-1">No {activeTab === 'active' ? 'Active' : 'Past'} Requests</p>
+            <p className="text-sm">
+              {activeTab === 'active' 
+                ? "You don't have any pending or partially returned requests."
+                : "You don't have any returned or cancelled requests."}
+            </p>
           </div>
         ) : (
           <div className="divide-y divide-black/5">
-            {requests.map(req => (
+            {displayedRequests.map(req => (
               <div
                 key={req.id}
                 onClick={() => setSelectedRequest(req)}
@@ -82,7 +119,6 @@ export default function MyRequests() {
       <NeumorphModal open={!!selectedRequest} onClose={() => setSelectedRequest(null)} title={`Request Details #${selectedRequest?.id}`}>
         {selectedRequest && (
           <div className="space-y-6 mt-4 p-2">
-
             <div className="flex justify-between items-center bg-black/[0.02] p-4 rounded-xl border border-black/5">
               <span className="text-muted font-bold text-sm uppercase tracking-wider flex items-center gap-2">
                 <Clock size={16}/> Status

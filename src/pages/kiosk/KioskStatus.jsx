@@ -2,16 +2,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
-import { Package, Scan, CheckCircle, Clock, AlertCircle, Keyboard, Camera, ArrowLeft } from 'lucide-react';
+import { Package, Scan, CheckCircle, Clock, AlertCircle, Keyboard, ImagePlus, ArrowLeft, UploadCloud } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
 import NeumorphCard from '../../components/ui/NeumorphCard';
 import NeumorphButton from '../../components/ui/NeumorphButton';
 
 // ── Public axios instance ─────────────────────────────────────────────────────
-// Does NOT have the auth interceptor that redirects to "/" on 401.
-// KioskStatus is a public page — using the main api client would cause a
-// redirect to the login page whenever the QR lookup fails or the token is absent.
 const publicApi = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:4000/api/v1',
   withCredentials: false,
@@ -19,89 +16,6 @@ const publicApi = axios.create({
 
 const fetchPublicQR = (code) =>
   publicApi.get(`/requests/qr/public/${encodeURIComponent(code)}`);
-
-// ─── Camera Scanner Component ─────────────────────────────────────────────────
-// Isolated so it mounts/unmounts cleanly — same pattern as Requests.jsx
-function CameraScanner({ onResult }) {
-  const containerRef = useRef(null);
-  const scannerRef   = useRef(null);
-  const isRunningRef = useRef(false);
-  const isMountedRef = useRef(true);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-
-    const timer = setTimeout(async () => {
-      if (!isMountedRef.current || !containerRef.current) return;
-
-      let cameras;
-      try {
-        cameras = await Html5Qrcode.getCameras();
-      } catch {
-        if (isMountedRef.current) toast.error('Camera access denied. Use the physical scanner instead.');
-        return;
-      }
-
-      if (!cameras?.length) {
-        if (isMountedRef.current) toast.error('No camera found. Use the physical scanner instead.');
-        return;
-      }
-
-      if (!isMountedRef.current || !containerRef.current) return;
-
-      const camera  = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[0];
-      const scanner = new Html5Qrcode('kiosk-qr-cam');
-      scannerRef.current = scanner;
-
-      try {
-        await scanner.start(
-          camera.id,
-          { fps: 10, qrbox: { width: 250, height: 250 } },
-          (decoded) => { if (isMountedRef.current) onResult(decoded); },
-          () => {}
-        );
-        isRunningRef.current = true;
-      } catch {
-        if (isMountedRef.current) toast.error('Could not start camera. Use the physical scanner instead.');
-        scannerRef.current = null;
-      }
-    }, 300);
-
-    return () => {
-      isMountedRef.current = false;
-      clearTimeout(timer);
-
-      const scanner = scannerRef.current;
-      scannerRef.current = null;
-
-      if (scanner && isRunningRef.current) {
-        isRunningRef.current = false;
-        // stop() can return undefined if the internal state is inconsistent —
-        // always check the return value before chaining .then/.catch
-        try {
-          const stopPromise = scanner.stop();
-          if (stopPromise && typeof stopPromise.then === 'function') {
-            stopPromise
-              .then(() => { try { scanner.clear(); } catch { } })
-              .catch(() => {});
-          } else {
-            try { scanner.clear(); } catch { }
-          }
-        } catch { }
-      } else if (scanner) {
-        try { scanner.clear(); } catch { }
-      }
-    };
-  }, []);
-
-  return (
-    <div
-      id="kiosk-qr-cam"
-      ref={containerRef}
-      className="w-full max-w-sm mx-auto rounded-xl overflow-hidden border-4 border-primary/20 bg-black/5 min-h-[280px]"
-    />
-  );
-}
 
 // ─── Status config ────────────────────────────────────────────────────────────
 const STATUS_CONFIG = {
@@ -126,24 +40,21 @@ const TIMELINE_STEPS = [
 export default function KioskStatus() {
   const navigate = useNavigate();
   const [requestData,  setRequestData]  = useState(null);
-  const [scanMode,     setScanMode]     = useState('camera'); // 'camera' | 'physical'
-  const [cameraActive, setCameraActive] = useState(true);
+  const [scanMode,     setScanMode]     = useState('physical'); // 'physical' | 'upload'
   const [processing,   setProcessing]   = useState(false);
 
-  // Physical scanner buffer — same stale-closure-safe pattern as Requests.jsx
-  const bufferRef    = useRef('');
-  const processingRef = useRef(false); // ref mirror so keydown handler sees latest value
+  const bufferRef     = useRef('');
+  const processingRef = useRef(false); 
 
   useEffect(() => { processingRef.current = processing; }, [processing]);
 
-  // ── Lookup handler (shared by both camera and physical scanner) ────────────
+  // ── Lookup handler (shared by both upload and physical scanner) ────────────
   const handleCode = useCallback(async (code) => {
-    if (processingRef.current) return; // debounce double-scans
+    if (processingRef.current) return; 
     const trimmed = code.trim();
     if (!trimmed) return;
 
     setProcessing(true);
-    setCameraActive(false); // stop camera while processing
     toast.loading('Checking status…', { id: 'kiosk' });
 
     try {
@@ -152,11 +63,7 @@ export default function KioskStatus() {
       toast.success('Request found!', { id: 'kiosk' });
     } catch {
       toast.error('Invalid QR or request not found.', { id: 'kiosk' });
-      // Resume scanning after a short delay so the user can try again
-      setTimeout(() => {
-        setCameraActive(true);
-        setProcessing(false);
-      }, 1500);
+      setTimeout(() => setProcessing(false), 1500);
       return;
     }
 
@@ -164,11 +71,8 @@ export default function KioskStatus() {
   }, []);
 
   // ── Physical scanner keydown listener ─────────────────────────────────────
-  // USB/Bluetooth scanners type characters rapidly then send Enter.
-  // We buffer every character and flush on Enter.
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Ignore keystrokes when the user is typing in a real input/textarea
       const tag = document.activeElement?.tagName?.toLowerCase();
       if (['input', 'textarea', 'select'].includes(tag)) return;
 
@@ -181,7 +85,6 @@ export default function KioskStatus() {
         return;
       }
 
-      // Only buffer printable characters (length 1)
       if (e.key.length === 1) {
         bufferRef.current += e.key;
       }
@@ -191,11 +94,31 @@ export default function KioskStatus() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleCode]);
 
+  // ── File Upload Handler ───────────────────────────────────────────────────
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setProcessing(true);
+    toast.loading('Scanning image...', { id: 'qr-scan' });
+
+    try {
+      const html5QrCode = new Html5Qrcode("hidden-file-scanner");
+      const decodedText = await html5QrCode.scanFile(file, true);
+      toast.dismiss('qr-scan');
+      handleCode(decodedText);
+    } catch (err) {
+      toast.error('No valid QR code found in this image.', { id: 'qr-scan' });
+      setProcessing(false);
+    } finally {
+      e.target.value = ''; // Reset file input so same file can be scanned again
+    }
+  };
+
   // ── Reset to scan again ────────────────────────────────────────────────────
   const resetScanner = () => {
     setRequestData(null);
     setProcessing(false);
-    setCameraActive(true);
     bufferRef.current = '';
   };
 
@@ -205,6 +128,10 @@ export default function KioskStatus() {
 
   return (
     <div className="min-h-screen bg-[#e0e5ec] flex flex-col items-center justify-center p-6">
+      
+      {/* Hidden div required by html5-qrcode for file scanning */}
+      <div id="hidden-file-scanner" style={{ display: 'none' }}></div>
+
       <div className="w-full max-w-2xl space-y-6">
 
         {/* Header */}
@@ -232,14 +159,6 @@ export default function KioskStatus() {
               {/* Mode toggle */}
               <div className="flex gap-2 bg-black/5 p-1 rounded-xl self-center">
                 <button
-                  onClick={() => setScanMode('camera')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-                    scanMode === 'camera' ? 'bg-white shadow text-primary' : 'text-muted hover:text-primary'
-                  }`}
-                >
-                  <Camera size={15}/> Camera
-                </button>
-                <button
                   onClick={() => setScanMode('physical')}
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                     scanMode === 'physical' ? 'bg-white shadow text-primary' : 'text-muted hover:text-primary'
@@ -247,29 +166,19 @@ export default function KioskStatus() {
                 >
                   <Keyboard size={15}/> Scanner
                 </button>
+                <button
+                  onClick={() => setScanMode('upload')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                    scanMode === 'upload' ? 'bg-white shadow text-primary' : 'text-muted hover:text-primary'
+                  }`}
+                >
+                  <ImagePlus size={15}/> Upload Image
+                </button>
               </div>
-
-              {/* Camera mode */}
-              {scanMode === 'camera' && (
-                <div className="w-full flex flex-col items-center gap-4">
-                  {cameraActive && <CameraScanner onResult={handleCode} />}
-                  {processing && (
-                    <div className="flex items-center gap-2 text-sm text-muted animate-pulse">
-                      <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin"/>
-                      Checking…
-                    </div>
-                  )}
-                  {!processing && (
-                    <p className="text-sm text-muted animate-pulse text-center">
-                      Present your QR code to the camera
-                    </p>
-                  )}
-                </div>
-              )}
 
               {/* Physical scanner mode */}
               {scanMode === 'physical' && (
-                <div className="flex flex-col items-center gap-6 py-6 w-full">
+                <div className="flex flex-col items-center gap-6 py-6 w-full animate-in fade-in zoom-in-95 duration-200">
                   <div className={`w-24 h-24 rounded-2xl flex items-center justify-center shadow-inner bg-[#e0e5ec] transition-all ${
                     processing ? 'scale-95 opacity-70' : 'scale-100'
                   }`}>
@@ -280,20 +189,37 @@ export default function KioskStatus() {
                     <p className="font-bold text-gray-700 text-lg">
                       {processing ? 'Processing…' : 'Ready to Scan'}
                     </p>
-                    <p className="text-sm text-muted mt-1">
-                      Point your Bluetooth or USB scanner at the QR code on your receipt.
-                      The system reads it automatically — no button press needed.
+                    <p className="text-sm text-muted mt-2 max-w-sm mx-auto leading-relaxed">
+                      Point your Bluetooth or USB scanner at the QR code on your receipt. The system reads it automatically — no button press needed.
                     </p>
                   </div>
 
-                  {/* Visual feedback bar — fills while buffer has content */}
+                  {/* Visual feedback bar */}
                   <div className="w-full max-w-xs h-2 bg-black/5 rounded-full overflow-hidden">
                     <div className={`h-full bg-primary rounded-full transition-all duration-200 ${processing ? 'w-full' : 'w-0'}`}/>
                   </div>
+                </div>
+              )}
 
-                  <p className="text-[11px] text-muted/60 text-center">
-                    Also works with USB barcode readers connected to this device
-                  </p>
+              {/* Upload Screenshot mode */}
+              {scanMode === 'upload' && (
+                <div className="w-full flex flex-col items-center gap-4 animate-in fade-in zoom-in-95 duration-200 py-4">
+                  <label className={`cursor-pointer flex flex-col items-center justify-center w-full max-w-sm h-56 border-2 border-dashed rounded-2xl transition-all ${processing ? 'bg-gray-100 border-gray-300 pointer-events-none' : 'border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50'}`}>
+                    <UploadCloud size={40} className={`mb-3 ${processing ? 'text-gray-400' : 'text-primary'}`} />
+                    <span className={`text-base font-bold ${processing ? 'text-gray-500' : 'text-primary'}`}>
+                      {processing ? 'Scanning Image...' : 'Tap to upload screenshot'}
+                    </span>
+                    <span className="text-xs text-muted mt-2 px-6 text-center">
+                      Select an image from your gallery containing your request QR code.
+                    </span>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      className="hidden" 
+                      onChange={handleFileUpload} 
+                      disabled={processing}
+                    />
+                  </label>
                 </div>
               )}
             </div>
@@ -316,17 +242,14 @@ export default function KioskStatus() {
               {/* Progress timeline */}
               {!isTerminal && (
                 <div className="relative py-6 px-2">
-                  {/* Track */}
                   <div className="absolute top-1/2 left-4 right-4 h-1 bg-black/5 -translate-y-1/2 rounded-full" />
-                  {/* Fill */}
                   <div
                     className="absolute top-1/2 left-4 h-1 bg-primary -translate-y-1/2 rounded-full transition-all duration-700"
                     style={{ width: `calc(${((currentStep - 1) / (TIMELINE_STEPS.length - 1)) * 100}% - 0px)`, maxWidth: 'calc(100% - 2rem)' }}
                   />
-                  {/* Steps */}
                   <div className="relative flex justify-between">
                     {TIMELINE_STEPS.map((step, idx) => {
-                      const stepNum   = idx + 2; // steps start at 2 (Approved=2)
+                      const stepNum   = idx + 2; 
                       const done      = currentStep >= stepNum;
                       const active    = currentStep === stepNum;
                       return (
@@ -357,7 +280,7 @@ export default function KioskStatus() {
                       <div>
                         <p className="font-bold text-sm text-gray-800">{item.item_name}</p>
                         <p className="text-[10px] font-mono text-muted">
-                          {item.inventory_item_barcode || 'Batch Item'} · ×{item.quantity || 1}
+                          {item.inventory_item_barcode || 'Batch Item'} · ×{item.quantity || item.qty_requested || 1}
                         </p>
                       </div>
                       <span className={`text-xs font-bold uppercase px-2 py-1 rounded-full ${

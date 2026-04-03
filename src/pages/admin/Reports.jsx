@@ -1,11 +1,12 @@
 // src/pages/admin/Reports.jsx
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Download, Trash2, Calendar,
-  Loader2, FileSpreadsheet, Filter, X, Printer
+  Loader2, FileSpreadsheet, Filter, X, Printer, Package, CheckCircle2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api/axiosClient.js';
+import { useAuth } from '../../context/AuthContext.jsx'; 
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const formatDate = (value) => {
@@ -20,56 +21,80 @@ const formatDate = (value) => {
   }
 };
 
-const resolveRequestedAt = (row) =>
-  row.requested_time ?? row.created_at ?? null;
+const resolveRequestedAt = (row) => row.created_at ?? row.requested_at ?? null;
+const resolveApprovedAt  = (row) => row.approved_time ?? row.approved_at ?? null;
+const resolveIssuedAt    = (row) => row.issued_time ?? row.issued_at ?? null;
 
-// FIX 2: Try every plausible column name the backend might return for approved_at.
-// The backend query likely SELECTs it as one of these — all are checked.
-const resolveApprovedAt = (row) =>
-  row.approved_at ??
-  row.approved_time ??
-  row.approval_time ??
-  row.approved_timestamp ??
-  row.approvedAt ??
-  null;
+// ⚡ FIX: Hyper-Aggressive Return Timestamp Hunter (catches Bulk QR Scanner returns)
+const resolveReturnedAt  = (row) => {
+  // 1. Check direct request-level fields
+  if (row.last_return_time) return row.last_return_time;
+  if (row.returned_at) return row.returned_at;
+  if (row.returned_time) return row.returned_time;
+  if (row.actual_return_time) return row.actual_return_time;
 
-const resolveIssuedAt = (row) =>
-  row.issued_at ??
-  row.issued_time ??
-  row.issuedAt ??
-  null;
+  // 2. Check the items array (Bulk scanner often updates items directly)
+  if (row.items && Array.isArray(row.items)) {
+    const itemTimes = row.items
+      .filter(i => String(i.item_status || i.status || '').toUpperCase() === 'RETURNED')
+      .map(i => i.returned_at || i.returned_time || i.last_return_time || i.updated_at)
+      .filter(Boolean);
+      
+    if (itemTimes.length > 0) {
+      // Sort descending to get the most recent item return time
+      itemTimes.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+      return itemTimes[0];
+    }
+  }
 
-const resolveReturnedAt = (row) =>
-  row.returned_at ??
-  row.full_return_time ??
-  row.returned_time ??
-  row.returnedAt ??
-  null;
+  // 3. Ultimate Fallback: The row's generic update timestamp
+  const status = String(row.request_status || row.status || '').toUpperCase();
+  if (status === 'RETURNED' || status === 'PARTIALLY RETURNED') {
+    return row.updated_at || null;
+  }
+  
+  return null;
+};
 
-const resolveStudentId = (row) =>
-  row.student_id ??
-  row.requester_student_id ??
-  row.student_number ??
-  row.requester_identifier ??
-  row.requester_id ??
-  null;
+const resolveStudentId   = (row) => row.requester_id ?? row.student_id ?? row.school_id ?? null;
+
+const getStatusColor = (status) => {
+  if (status === 'RETURNED') return 'bg-gray-100 text-gray-600 border-gray-200';
+  if (status === 'PARTIALLY RETURNED') return 'bg-orange-100 text-orange-700 border-orange-200';
+  if (status === 'ISSUED') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+  return 'bg-blue-100 text-blue-700 border-blue-200';
+};
+
+const isValidItem = (item) => ['ISSUED', 'RETURNED', 'PARTIALLY RETURNED'].includes(item.item_status || item.status);
+const getItemQty = (item) => item.quantity_issued || item.qty_requested || item.quantity || 1;
 
 // ─── CSV export ───────────────────────────────────────────────────────────────
 function exportToExcel(rows, filename, roleFilter) {
   if (!rows.length) return toast.error('Nothing to export');
   const showStudentId = roleFilter !== 'faculty';
-  const headers = ['Requester'];
-  if (showStudentId) headers.push('Student ID');
+  
+  const headers = ['Request ID', 'Status', 'Requester'];
+  if (showStudentId) headers.push('User ID');
   headers.push('Items (Barcodes)', 'Requested At', 'Approved At', 'Issued At', 'Returned At');
+  
   const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  
   const csvRows = [
     headers.join(','),
     ...rows.map(r => {
-      const itemsText = r.items?.length
-        ? r.items.map(i => `${i.name} [${i.barcode || 'Batch'}] x${i.quantity || 1}`).join(' | ')
+      const validItems = (r.items || []).filter(isValidItem);
+      const itemsText = validItems.length
+        ? validItems.map(i => `${i.item_name} [${i.barcode || 'Batch'}] x${getItemQty(i)}`).join(' | ')
         : (r.items_summary ?? '—');
-      const row = [escape(r.requester_name)];
+        
+      const row = [
+        escape(`#${r.request_id || r.id}`),
+        escape(r.request_status || r.status),
+        escape(r.requester_name)
+      ];
+      
       if (showStudentId) row.push(escape(r.requester_type === 'student' ? (resolveStudentId(r) ?? '—') : '—'));
+      
       row.push(
         escape(itemsText),
         escape(resolveRequestedAt(r) ? new Date(resolveRequestedAt(r)).toLocaleString() : '—'),
@@ -80,6 +105,7 @@ function exportToExcel(rows, filename, roleFilter) {
       return row.join(',');
     })
   ];
+  
   const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -88,9 +114,7 @@ function exportToExcel(rows, filename, roleFilter) {
   toast.success('Exported successfully');
 }
 
-// ─── FIX 3: Print handler ─────────────────────────────────────────────────────
-// Injects a temporary print stylesheet, triggers window.print(), then removes it.
-// This avoids polluting the global stylesheet and works with any CSS framework.
+// ─── Print handler ─────────────────────────────────────────────────────
 function printReport(rows, roleFilter, dateFrom, dateTo) {
   if (!rows.length) return toast.error('Nothing to print');
 
@@ -98,17 +122,20 @@ function printReport(rows, roleFilter, dateFrom, dateTo) {
   const title = `Equipment Request Report${roleFilter !== 'all' ? ` — ${roleFilter.charAt(0).toUpperCase() + roleFilter.slice(1)}` : ''}`;
   const subtitle = [dateFrom && `From: ${dateFrom}`, dateTo && `To: ${dateTo}`].filter(Boolean).join('  ·  ');
 
-  const headerCells = ['Requester', showStudentId && 'Student ID', 'Items', 'Requested At', 'Approved At', 'Issued At', 'Returned At']
+  const headerCells = ['Req #', 'Status', 'Requester', showStudentId && 'User ID', 'Items', 'Requested At', 'Approved At', 'Issued At', 'Returned At']
     .filter(Boolean)
     .map(h => `<th>${h}</th>`)
     .join('');
 
   const bodyRows = rows.map(r => {
-    const itemsHtml = (r.items ?? []).length
-      ? r.items.map(i => `<span class="item-line">${i.name} <code>${i.barcode || 'Batch'}</code> ×${i.quantity || 1}</span>`).join('')
+    const validItems = (r.items || []).filter(isValidItem);
+    const itemsHtml = validItems.length
+      ? validItems.map(i => `<span class="item-line">${i.item_name} <code>${i.barcode || 'Batch'}</code> ×${getItemQty(i)}</span>`).join('')
       : (r.items_summary ?? '—');
 
     const cells = [
+      `<td><strong>#${r.request_id || r.id}</strong></td>`,
+      `<td><span class="badge status-${String(r.request_status || r.status).replace(' ', '-').toLowerCase()}">${r.request_status || r.status}</span></td>`,
       `<td><strong>${r.requester_name ?? '—'}</strong><br/><span class="badge ${r.requester_type}">${r.requester_type}</span></td>`,
       showStudentId && `<td>${r.requester_type === 'student' ? (resolveStudentId(r) ?? '—') : '—'}</td>`,
       `<td class="items-cell">${itemsHtml}</td>`,
@@ -139,9 +166,11 @@ function printReport(rows, roleFilter, dateFrom, dateTo) {
         tr:nth-child(even) td { background: #f9fafb; }
         .item-line { display: block; margin-bottom: 2px; }
         code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 9px; }
-        .badge { display: inline-block; padding: 1px 6px; border-radius: 999px; font-size: 9px; font-weight: 600; margin-top: 2px; }
-        .badge.faculty { background: #dbeafe; color: #1d4ed8; }
-        .badge.student { background: #dcfce7; color: #15803d; }
+        .badge { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 8px; font-weight: bold; margin-top: 2px; border: 1px solid #ccc; }
+        .badge.faculty { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+        .badge.student { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+        .badge.status-returned { background: #f3f4f6; color: #4b5563; }
+        .badge.status-issued { background: #d1fae5; color: #047857; }
         .items-cell { max-width: 200px; }
         .meta { font-size: 9px; color: #888; margin-top: 12px; }
       </style>
@@ -163,23 +192,23 @@ function printReport(rows, roleFilter, dateFrom, dateTo) {
   win.document.write(html);
   win.document.close();
   win.focus();
-  // Small delay so browser finishes rendering before print dialog
   setTimeout(() => { win.print(); win.close(); }, 400);
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 const DateInput = ({ label, value, onChange }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-xs font-semibold text-muted dark:text-darkMuted uppercase tracking-wide">{label}</label>
+  <div className="flex flex-col gap-1 w-full sm:w-auto">
+    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">{label}</label>
     <div className="relative">
-      <Calendar size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-      <input type="date" className="neu-input pl-8 text-sm w-full" value={value} onChange={e => onChange(e.target.value)} />
+      <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+      <input type="date" className="w-full sm:w-40 pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" value={value} onChange={e => onChange(e.target.value)} />
     </div>
   </div>
 );
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function Reports() {
+  const { user } = useAuth();
   const [rows, setRows]               = useState([]);
   const [loading, setLoading]         = useState(true);
   const [roleFilter, setRoleFilter]   = useState('all');
@@ -195,26 +224,47 @@ export default function Reports() {
     setLoading(true);
     try {
       const params = {};
-      if (roleFilter !== 'all') params.type = roleFilter;
       if (filterMode && dateFrom) params.from = dateFrom;
       if (filterMode && dateTo)   params.to   = dateTo;
+      if (user?.room_id) params.room_id = user.room_id;
+      
       const res = await api.get('/reports/issued', { params });
-      setRows(res.data?.data ?? res.data ?? []);
+      let fetchedData = res.data?.data ?? res.data ?? [];
+      
+      if (user?.room_id) {
+        fetchedData = fetchedData.filter(r => 
+          String(r.room_id) === String(user.room_id) || 
+          !r.room_id || 
+          (r.items && r.items.some(i => String(i.location_room_id) === String(user.room_id)))
+        );
+      }
+
+      setRows(fetchedData);
     } catch (err) {
       console.error('Fetch reports error', err);
       toast.error('Failed to load reports');
     } finally {
       setLoading(false);
     }
-  }, [roleFilter, filterMode, dateFrom, dateTo]);
+  }, [filterMode, dateFrom, dateTo, user?.room_id]);
 
   useEffect(() => { fetchReports(); }, [fetchReports]);
+
+  const filteredRows = useMemo(() => {
+    if (roleFilter === 'all') return rows;
+    return rows.filter(r => String(r.requester_type).toLowerCase() === roleFilter);
+  }, [rows, roleFilter]);
 
   const handleDeleteFiltered = async () => {
     setDeleting(true);
     try {
       await api.delete('/reports', {
-        params: { from: dateFrom || undefined, to: dateTo || undefined, type: roleFilter !== 'all' ? roleFilter : undefined }
+        params: { 
+          from: dateFrom || undefined, 
+          to: dateTo || undefined, 
+          type: roleFilter !== 'all' ? roleFilter : undefined,
+          room_id: user?.room_id 
+        }
       });
       toast.success('Filtered records deleted');
       setDeleteConfirm(false);
@@ -231,161 +281,154 @@ export default function Reports() {
   const showStudentId = roleFilter !== 'faculty';
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-black/5 shadow-sm">
         <div>
-          <h1 className="font-display text-2xl font-bold text-primary dark:text-darkText">Reports</h1>
-          <p className="text-sm text-muted dark:text-darkMuted mt-0.5">{rows.length} issued records</p>
+          <h1 className="text-2xl font-black text-gray-800 tracking-tight">Reports & History</h1>
+          <p className="text-sm text-gray-500 font-medium mt-1">Found <strong className="text-primary">{filteredRows.length}</strong> matching records.</p>
         </div>
 
-        <div className="flex gap-2 flex-wrap">
-          {/* FIX 3: Print button */}
-          <button
-            onClick={() => printReport(rows, roleFilter, isFiltered ? dateFrom : '', isFiltered ? dateTo : '')}
-            className="neu-btn text-sm px-4 py-2 flex items-center gap-2"
-          >
-            <Printer size={14} />
-            Print {isFiltered ? 'Filtered' : 'All'}
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => printReport(filteredRows, roleFilter, isFiltered ? dateFrom : '', isFiltered ? dateTo : '')} className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-bold rounded-xl border border-gray-200 transition-colors">
+            <Printer size={16} /> Print {isFiltered ? 'Filtered' : 'All'}
           </button>
-
-          <button
-            onClick={() => exportToExcel(rows, `invncea_report_${roleFilter}_${Date.now()}`, roleFilter)}
-            className="neu-btn text-sm px-4 py-2 flex items-center gap-2"
-          >
-            <FileSpreadsheet size={14} />
-            Export {isFiltered ? 'Filtered' : 'All'}
+          <button onClick={() => exportToExcel(filteredRows, `invncea_report_${roleFilter}_${Date.now()}`, roleFilter)} className="flex items-center gap-2 px-4 py-2.5 bg-green-50 hover:bg-green-100 text-green-700 text-sm font-bold rounded-xl border border-green-200 transition-colors">
+            <FileSpreadsheet size={16} /> Export CSV
           </button>
-
-          {isFiltered && (
-            <button
-              onClick={async () => {
-                const res = await api.get('/reports/issued', { params: roleFilter !== 'all' ? { type: roleFilter } : {} });
-                exportToExcel(res.data?.data ?? res.data ?? [], `invncea_report_all_${Date.now()}`, roleFilter);
-              }}
-              className="neu-btn text-sm px-4 py-2 flex items-center gap-2"
-            >
-              <Download size={14} /> Export All
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Role filter + date filter toggle */}
-      <div className="flex gap-2 flex-wrap">
-        {['all', 'faculty', 'student'].map(r => (
-          <button key={r} onClick={() => setRoleFilter(r)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border capitalize
-              ${roleFilter === r
-                ? 'bg-primary text-white border-primary'
-                : 'border-black/10 dark:border-white/10 text-muted dark:text-darkMuted hover:border-primary'}`}>
-            {r === 'all' ? 'All' : r.charAt(0).toUpperCase() + r.slice(1)}
-          </button>
-        ))}
-        <button
-          onClick={() => setFilterMode(f => !f)}
-          className={`ml-auto px-4 py-2 rounded-lg text-sm font-medium transition-all border flex items-center gap-2
-            ${filterMode
-              ? 'bg-primary text-white border-primary'
-              : 'border-black/10 dark:border-white/10 text-muted dark:text-darkMuted hover:border-primary'}`}>
-          <Filter size={13} />
-          {filterMode ? 'Filtering' : 'Filter by Date'}
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-4 bg-white p-4 rounded-2xl border border-black/5 shadow-sm">
+        <div className="flex bg-gray-100 p-1 rounded-xl">
+          {['all', 'faculty', 'student'].map(r => (
+            <button key={r} onClick={() => setRoleFilter(r)} className={`px-5 py-2 rounded-lg text-sm font-bold capitalize transition-all ${roleFilter === r ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+              {r}
+            </button>
+          ))}
+        </div>
+        <button onClick={() => setFilterMode(f => !f)} className={`ml-auto px-5 py-2 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2 ${filterMode ? 'bg-primary text-white border-primary' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'}`}>
+          <Filter size={16} /> {filterMode ? 'Close Filters' : 'Filter by Date'}
         </button>
       </div>
 
       {/* Date filter panel */}
       {filterMode && (
-        <div className="neu-card p-4 flex flex-col sm:flex-row gap-4 items-end animate-slide-up">
-          <DateInput label="From" value={dateFrom} onChange={setDateFrom} />
-          <DateInput label="To"   value={dateTo}   onChange={setDateTo}   />
-          <div className="flex gap-2 items-center">
-            <button onClick={fetchReports} className="neu-btn-primary text-sm px-4 py-2">Apply</button>
-            <button onClick={clearFilters} className="neu-btn text-sm px-3 py-2"><X size={14} /></button>
+        <div className="bg-white p-5 rounded-2xl border border-black/5 shadow-sm flex flex-col sm:flex-row gap-4 items-end animate-in slide-in-from-top-4 duration-200">
+          <DateInput label="Start Date" value={dateFrom} onChange={setDateFrom} />
+          <DateInput label="End Date"   value={dateTo}   onChange={setDateTo}   />
+          <div className="flex gap-2 w-full sm:w-auto">
+            <button onClick={fetchReports} className="flex-1 sm:flex-none px-6 py-2 bg-primary hover:bg-primary/90 text-white font-bold rounded-lg transition-colors shadow-sm">Apply Filters</button>
+            <button onClick={clearFilters} className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-lg transition-colors"><X size={18} /></button>
           </div>
           {(dateFrom || dateTo) && (
-            <button onClick={() => setDeleteConfirm(true)}
-              className="ml-auto flex items-center gap-2 text-sm text-red-500 hover:text-red-600 font-medium transition-colors">
-              <Trash2 size={14} /> Delete Filtered Rows
+            <button onClick={() => setDeleteConfirm(true)} className="ml-auto flex items-center justify-center gap-2 px-4 py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-bold transition-colors w-full sm:w-auto mt-2 sm:mt-0">
+              <Trash2 size={16} /> Delete Filtered Rows
             </button>
           )}
         </div>
       )}
 
       {/* Table */}
-      <div className="neu-card overflow-hidden">
+      <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
         {loading ? (
-          <div className="flex justify-center py-16"><Loader2 size={24} className="animate-spin text-primary" /></div>
-        ) : rows.length === 0 ? (
-          <div className="py-16 text-center text-sm text-muted dark:text-darkMuted">No issued records found.</div>
+          <div className="flex flex-col items-center justify-center py-24 text-gray-400">
+            <Loader2 size={32} className="animate-spin text-primary mb-4" />
+            <p className="font-bold">Fetching records...</p>
+          </div>
+        ) : filteredRows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <div className="w-16 h-16 bg-gray-50 text-gray-300 rounded-full flex items-center justify-center mb-3">
+              <Calendar size={28} />
+            </div>
+            <p className="text-lg font-black text-gray-800">No records found</p>
+            <p className="text-sm text-gray-500 mt-1">Try adjusting your filters or date ranges.</p>
+          </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-black/[0.02] dark:bg-white/[0.03]">
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-muted dark:text-darkMuted uppercase tracking-wide">Requester</th>
-                  {showStudentId && (
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-muted dark:text-darkMuted uppercase tracking-wide">Student ID</th>
-                  )}
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-muted dark:text-darkMuted uppercase tracking-wide">Items (Barcodes)</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-muted dark:text-darkMuted uppercase tracking-wide">Requested At</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-muted dark:text-darkMuted uppercase tracking-wide">Approved At</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-muted dark:text-darkMuted uppercase tracking-wide">Issued At</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-muted dark:text-darkMuted uppercase tracking-wide">Returned At</th>
+          <div className="overflow-x-auto custom-scrollbar">
+            <table className="w-full text-left min-w-[1000px]">
+              <thead className="bg-gray-50/80 border-b border-black/5">
+                <tr>
+                  <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">Req ID / Status</th>
+                  <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest">Requester</th>
+                  {showStudentId && <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">User ID</th>}
+                  <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest w-1/4">Items Issued</th>
+                  <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">Requested</th>
+                  <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">Approved</th>
+                  <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">Issued</th>
+                  <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">Returned</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-black/5 dark:divide-white/5">
-                {rows.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors">
-                    <td className="px-6 py-4">
-                      <p className="font-medium text-primary dark:text-darkText">{row.requester_name}</p>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium inline-block mt-1
-                        ${row.requester_type === 'faculty'
-                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                          : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'}`}>
-                        {row.requester_type}
-                      </span>
-                    </td>
+              <tbody className="divide-y divide-black/5">
+                {filteredRows.map((row, idx) => {
+                  const reqStatus = row.request_status || row.status;
+                  const validItems = (row.items || []).filter(isValidItem);
 
-                    {showStudentId && (
-                      <td className="px-6 py-4 text-muted dark:text-darkMuted">
-                        {row.requester_type === 'student' ? (resolveStudentId(row) ?? '—') : '—'}
+                  return (
+                    <tr key={idx} className="hover:bg-primary/[0.02] transition-colors">
+                      <td className="px-6 py-4 align-top">
+                        <div className="font-mono text-xs font-black text-gray-500 mb-1.5">#{row.request_id || row.id}</div>
+                        <span className={`inline-block text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider border ${getStatusColor(reqStatus)}`}>
+                          {reqStatus}
+                        </span>
                       </td>
-                    )}
 
-                    <td className="px-6 py-4">
-                      <div className="space-y-0.5">
-                        {(row.items ?? []).map((item, i) => (
-                          <div key={i} className="flex flex-wrap items-center gap-1.5 text-xs text-muted dark:text-darkMuted">
-                            <span className="font-medium text-primary dark:text-darkText">{item.name}</span>
-                            <span className="font-mono bg-black/5 dark:bg-white/5 px-1.5 py-0.5 rounded">{item.barcode || 'Batch'}</span>
-                            {item.quantity > 1 && <span>×{item.quantity}</span>}
+                      <td className="px-6 py-4 align-top">
+                        <p className="font-bold text-gray-800 text-sm leading-tight">{row.requester_name}</p>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-black uppercase inline-block mt-1 tracking-wider ${row.requester_type === 'faculty' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
+                          {row.requester_type}
+                        </span>
+                      </td>
+
+                      {showStudentId && (
+                        <td className="px-6 py-4 align-top text-xs font-bold text-gray-600">
+                          {row.requester_type === 'student' ? (resolveStudentId(row) ?? '—') : '—'}
+                        </td>
+                      )}
+
+                      <td className="px-6 py-4 align-top">
+                        <div className="space-y-1.5">
+                          {validItems.map((item, i) => (
+                            <div key={i} className="flex items-start gap-2 text-xs">
+                              <Package size={14} className="text-gray-400 mt-0.5 shrink-0" />
+                              <div>
+                                <span className="font-bold text-gray-700">{item.item_name}</span>
+                                {item.barcode && <span className="ml-1.5 font-mono text-[10px] text-gray-500 bg-gray-100 px-1 rounded">[{item.barcode}]</span>}
+                                <span className="ml-1.5 font-black text-primary bg-primary/10 px-1 rounded">×{getItemQty(item)}</span>
+                              </div>
+                            </div>
+                          ))}
+                          {validItems.length === 0 && (
+                            <span className="text-xs text-gray-400 italic">{row.items_summary ?? 'No items listed'}</span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="px-6 py-4 align-top text-xs font-medium text-gray-600 whitespace-nowrap">
+                        {resolveRequestedAt(row) ? formatDate(resolveRequestedAt(row)) : '—'}
+                      </td>
+
+                      <td className="px-6 py-4 align-top text-xs font-medium text-gray-600 whitespace-nowrap">
+                        {resolveApprovedAt(row) ? formatDate(resolveApprovedAt(row)) : '—'}
+                      </td>
+
+                      <td className="px-6 py-4 align-top text-xs font-medium text-gray-600 whitespace-nowrap">
+                        {resolveIssuedAt(row) ? formatDate(resolveIssuedAt(row)) : '—'}
+                      </td>
+
+                      <td className="px-6 py-4 align-top text-xs font-black text-gray-800 whitespace-nowrap">
+                        {resolveReturnedAt(row) ? (
+                          <div className="flex items-center gap-1.5 text-emerald-600">
+                            <CheckCircle2 size={14} />
+                            {formatDate(resolveReturnedAt(row))}
                           </div>
-                        ))}
-                        {(!row.items || row.items.length === 0) && (
-                          <span className="text-xs text-muted dark:text-darkMuted">{row.items_summary ?? '—'}</span>
-                        )}
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-4 text-xs text-muted dark:text-darkMuted whitespace-nowrap">
-                      {resolveRequestedAt(row) ? formatDate(resolveRequestedAt(row)) : '—'}
-                    </td>
-
-                    {/* FIX 2: uses the hardened resolveApprovedAt that tries all possible column names */}
-                    <td className="px-6 py-4 text-xs text-muted dark:text-darkMuted whitespace-nowrap">
-                      {resolveApprovedAt(row) ? formatDate(resolveApprovedAt(row)) : '—'}
-                    </td>
-
-                    <td className="px-6 py-4 text-xs text-muted dark:text-darkMuted whitespace-nowrap">
-                      {resolveIssuedAt(row) ? formatDate(resolveIssuedAt(row)) : '—'}
-                    </td>
-
-                    <td className="px-6 py-4 text-xs text-muted dark:text-darkMuted whitespace-nowrap">
-                      {resolveReturnedAt(row) ? formatDate(resolveReturnedAt(row)) : '—'}
-                    </td>
-                  </tr>
-                ))}
+                        ) : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -394,24 +437,22 @@ export default function Reports() {
 
       {/* Delete confirm modal */}
       {deleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
-          <div className="neu-card-lg w-full max-w-sm p-6 animate-slide-up">
-            <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
-              <Trash2 size={20} className="text-red-500" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+              <Trash2 size={28} className="text-red-500" />
             </div>
-            <h3 className="font-display text-center text-lg font-bold text-primary dark:text-darkText mb-1">Delete Filtered Records?</h3>
-            <p className="text-sm text-center text-muted dark:text-darkMuted mb-2">
-              This will permanently delete all issued records
+            <h3 className="text-center text-xl font-black text-gray-900 mb-2">Delete Filtered Records?</h3>
+            <p className="text-sm text-center text-gray-600 mb-6 font-medium leading-relaxed">
+              This will permanently delete all displayed records
               {dateFrom && ` from ${dateFrom}`}{dateTo && ` to ${dateTo}`}
               {roleFilter !== 'all' && ` for ${roleFilter}s`}.
+              <br/><span className="text-red-500 font-bold block mt-2">This action cannot be undone.</span>
             </p>
-            <p className="text-xs text-center text-red-500 mb-6">This action cannot be undone.</p>
             <div className="flex gap-3">
-              <button onClick={() => setDeleteConfirm(false)} className="flex-1 neu-btn text-sm py-2.5">Cancel</button>
-              <button onClick={handleDeleteFiltered} disabled={deleting}
-                className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm py-2.5 font-medium transition-colors flex items-center justify-center gap-2">
-                {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                Delete
+              <button onClick={() => setDeleteConfirm(false)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 rounded-xl transition-colors">Cancel</button>
+              <button onClick={handleDeleteFiltered} disabled={deleting} className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2">
+                {deleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />} Delete Forever
               </button>
             </div>
           </div>

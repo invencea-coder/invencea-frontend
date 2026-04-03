@@ -1,16 +1,38 @@
-import React, { useState, useEffect } from 'react';
+// src/pages/student/StudentDashboard.jsx
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, FileText, KeyRound } from 'lucide-react';
+import { PlusCircle, FileText, KeyRound, QrCode, AlertTriangle, Clock, Package, CheckCircle2, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useAuth } from '../../hooks/useAuth.js';
+import { QRCodeSVG } from 'qrcode.react';
+import { useAuth } from '../../context/AuthContext.jsx'; // Updated path if needed
 import { listRequests } from '../../api/requestAPI.js';
 import { changeStudentPin } from '../../api/authAPI.js';
 import NeumorphCard from '../../components/ui/NeumorphCard.jsx';
 import NeumorphButton from '../../components/ui/NeumorphButton.jsx';
 import NeumorphModal from '../../components/ui/NeumorphModal.jsx';
 import NeumorphInput from '../../components/ui/NeumorphInput.jsx';
-import { statusColor } from '../../utils/format.js';
-import { fmtDateTime } from '../../utils/date.js';
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const formatDate = (dateString) => {
+  if (!dateString) return '—';
+  return new Date(dateString).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+};
+
+const getStatusBadge = (status) => {
+  switch (status) {
+    case 'APPROVED':           return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    case 'ISSUED':             return 'bg-blue-100 text-blue-700 border-blue-200';
+    case 'PARTIALLY RETURNED': return 'bg-amber-100 text-amber-700 border-amber-200';
+    case 'PENDING':
+    case 'PENDING APPROVAL':   return 'bg-orange-100 text-orange-700 border-orange-200';
+    case 'RETURNED':           return 'bg-gray-100 text-gray-600 border-gray-200';
+    case 'REJECTED':
+    case 'CANCELLED':          return 'bg-red-100 text-red-700 border-red-200';
+    default:                   return 'bg-gray-100 text-gray-600 border-gray-200';
+  }
+};
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -23,12 +45,44 @@ export default function StudentDashboard() {
   const [pinForm, setPinForm] = useState({ current_pin: '', new_pin: '', confirm_pin: '' });
   const [changingPin, setChangingPin] = useState(false);
 
+  // --- Digital Ticket State ---
+  const [selectedTicket, setSelectedTicket] = useState(null);
+
   useEffect(() => {
+    // List requests for the logged-in student
     listRequests({})
-      .then(r => setRequests(r.data.data))
-      .catch(() => {})
+      .then(r => setRequests(r.data?.data || r.data || []))
+      .catch(() => toast.error("Could not load your requests."))
       .finally(() => setLoading(false));
   }, []);
+
+  // --- Data Processing for Dashboard ---
+  const { activeRequests, history, overdueCount } = useMemo(() => {
+    const active = [];
+    const hist = [];
+    let overdue = 0;
+    const now = new Date();
+
+    requests.forEach(req => {
+      const isOverdue = req.status === 'ISSUED' && req.return_deadline && new Date(req.return_deadline) < now;
+      if (isOverdue) overdue++;
+
+      if (['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(req.status)) {
+        active.push({ ...req, isOverdue });
+      } else {
+        hist.push(req);
+      }
+    });
+
+    // Sort active so APPROVED (ready for pickup) is at the top!
+    active.sort((a, b) => {
+      if (a.status === 'APPROVED' && b.status !== 'APPROVED') return -1;
+      if (b.status === 'APPROVED' && a.status !== 'APPROVED') return 1;
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+
+    return { activeRequests: active, history: hist, overdueCount: overdue };
+  }, [requests]);
 
   // --- Change PIN Handlers ---
   const handlePinChangeInput = (field, value) => {
@@ -55,73 +109,163 @@ export default function StudentDashboard() {
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
-      {/* User info card - compact with Change PIN button */}
-      <NeumorphCard className="p-4 flex justify-between items-start">
-        <div>
-          <p className="text-xs text-muted uppercase tracking-wider">Logged in as</p>
-          <p className="text-xl font-display font-bold text-primary">{user?.full_name}</p>
-          <p className="text-sm font-mono text-muted">{user?.student_id}</p>
+    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-5 pb-20">
+      
+      {/* ─── OVERDUE BANNER ─── */}
+      {overdueCount > 0 && (
+        <div className="bg-red-50 border border-red-200 p-4 rounded-2xl flex items-start gap-3 animate-pulse shadow-sm">
+          <div className="bg-red-100 text-red-600 p-2 rounded-xl mt-0.5"><AlertTriangle size={20} /></div>
+          <div>
+            <h3 className="text-sm font-black text-red-800">Overdue Equipment Alert</h3>
+            <p className="text-xs text-red-700 mt-1 font-medium">You have {overdueCount} active request(s) past the return deadline. Please return the equipment to the administration counter immediately.</p>
+          </div>
         </div>
-        <NeumorphButton 
-          variant="outline" 
-          size="sm" 
-          onClick={() => setIsPinModalOpen(true)} 
-          className="flex items-center gap-2 text-xs"
-        >
-          <KeyRound size={14} /> Change PIN
-        </NeumorphButton>
+      )}
+
+      {/* ─── USER PROFILE CARD ─── */}
+      <NeumorphCard className="p-5 flex justify-between items-center bg-white shadow-sm border border-black/5">
+        <div>
+          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Student Portal</p>
+          <p className="text-xl font-black text-primary leading-tight mt-0.5">{user?.full_name || 'Student'}</p>
+          <p className="text-xs font-bold text-gray-500 mt-0.5">{user?.student_id}</p>
+        </div>
+        <button onClick={() => setIsPinModalOpen(true)} className="flex flex-col items-center justify-center p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors border border-black/5">
+          <KeyRound size={18} className="text-gray-600 mb-1" />
+          <span className="text-[9px] font-black text-gray-500 uppercase tracking-wider">Change PIN</span>
+        </button>
       </NeumorphCard>
 
-      {/* Action buttons - touch friendly */}
+      {/* ─── ACTION BUTTONS (MOBILE FRIENDLY) ─── */}
       <div className="grid grid-cols-2 gap-4">
-        <NeumorphCard
-          hover
-          className="p-5 flex flex-col items-center gap-3 cursor-pointer"
-          onClick={() => navigate('/student/new-request')}
-        >
-          <PlusCircle size={32} className="text-primary" />
-          <span className="text-sm font-semibold text-primary">New Request</span>
+        <NeumorphCard hover className="p-5 flex flex-col items-center justify-center gap-2 cursor-pointer bg-primary/5 border border-primary/20 shadow-sm" onClick={() => navigate('/student/new-request')}>
+          <div className="w-12 h-12 rounded-full bg-primary text-white flex items-center justify-center shadow-md shadow-primary/30">
+            <PlusCircle size={24} />
+          </div>
+          <span className="text-sm font-black text-primary tracking-tight">New Request</span>
         </NeumorphCard>
-        <NeumorphCard
-          hover
-          className="p-5 flex flex-col items-center gap-3 cursor-pointer"
-          onClick={() => navigate('/student/my-requests')}
-        >
-          <FileText size={32} className="text-muted" />
-          <span className="text-sm font-semibold text-primary">My Requests</span>
+        
+        <NeumorphCard hover className="p-5 flex flex-col items-center justify-center gap-2 cursor-pointer bg-white border border-black/5 shadow-sm" onClick={() => navigate('/student/my-requests')}>
+          <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center border border-black/5">
+            <FileText size={24} />
+          </div>
+          <span className="text-sm font-black text-gray-700 tracking-tight">All Requests</span>
         </NeumorphCard>
       </div>
 
-      {/* Recent requests - compact list */}
-      <NeumorphCard className="p-4">
-        <h3 className="font-display font-semibold text-primary mb-3">Recent Requests</h3>
+      {/* ─── ACTIVE REQUESTS (DIGITAL TICKET WALLET) ─── */}
+      <div className="space-y-3">
+        <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5 ml-1">
+          <Clock size={14} /> Active Activity
+        </h3>
+
         {loading ? (
-          <div className="flex justify-center py-6">
-            <div className="neu-spinner w-6 h-6" />
-          </div>
-        ) : requests.length === 0 ? (
-          <p className="text-sm text-center text-muted py-4">No requests yet</p>
+          <div className="flex justify-center py-10 bg-white rounded-2xl border border-black/5 shadow-sm"><div className="neu-spinner w-8 h-8" /></div>
+        ) : activeRequests.length === 0 ? (
+          <NeumorphCard className="p-8 text-center bg-white border border-black/5 shadow-sm">
+            <CheckCircle2 size={32} className="mx-auto mb-3 text-gray-300" />
+            <p className="text-sm font-bold text-gray-600">No active requests.</p>
+            <p className="text-xs text-gray-400 mt-1">You are all caught up! Tap 'New Request' to borrow equipment.</p>
+          </NeumorphCard>
         ) : (
-          <div className="space-y-2">
-            {requests.slice(0, 5).map(r => (
-              <div key={r.id} className="neu-card-sm p-3 flex items-center justify-between">
-                <div>
-                  <span className="font-mono text-xs text-muted">#{r.id}</span>
-                  <p className="text-xs text-primary mt-0.5">{r.room_code || 'No room'}</p>
+          <div className="space-y-3">
+            {activeRequests.map(r => (
+              <div key={r.id} className={`p-4 rounded-2xl border bg-white shadow-sm transition-all ${r.isOverdue ? 'border-red-300 shadow-red-500/10' : r.status === 'APPROVED' ? 'border-emerald-300 shadow-emerald-500/10' : 'border-black/5'}`}>
+                
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded uppercase tracking-wider border ${getStatusBadge(r.status)}`}>
+                      {r.status}
+                    </span>
+                    <p className="text-sm font-black text-gray-800 mt-2">{r.purpose || 'General Use'}</p>
+                    <p className="text-xs font-medium text-gray-500 mt-0.5">#{r.id} • {r.items?.length || 0} items</p>
+                  </div>
+                  {r.status === 'APPROVED' && (
+                    <button onClick={() => setSelectedTicket(r)} className="flex flex-col items-center justify-center p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200 transition-colors shadow-sm">
+                      <QrCode size={20} className="mb-1" />
+                      <span className="text-[9px] font-black uppercase tracking-wider">Show QR</span>
+                    </button>
+                  )}
                 </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className={`badge ${statusColor(r.status)}`}>{r.status}</span>
-                  <span className="text-[10px] text-muted">{fmtDateTime(r.requested_time)}</span>
+
+                <div className="bg-gray-50 rounded-xl p-3 border border-black/5">
+                  {r.status === 'PENDING' || r.status === 'PENDING APPROVAL' ? (
+                    <p className="text-xs font-bold text-gray-600 flex items-center gap-1.5"><Clock size={12}/> Waiting for Admin Approval...</p>
+                  ) : r.status === 'APPROVED' ? (
+                    <div>
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Pickup Window</p>
+                      <p className="text-xs font-bold text-emerald-700">
+                        {r.pickup_start ? `${formatDate(r.pickup_start)}` : r.pickup_datetime ? formatDate(r.pickup_datetime) : 'Ready for walk-in pickup'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Return Deadline</p>
+                      <p className={`text-xs font-bold flex items-center gap-1.5 ${r.isOverdue ? 'text-red-600' : 'text-blue-700'}`}>
+                        {r.isOverdue && <AlertTriangle size={12} />}
+                        {r.return_deadline ? formatDate(r.return_deadline) : 'End of Day'}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         )}
-      </NeumorphCard>
+      </div>
 
-      {/* Change PIN Modal */}
-      <NeumorphModal open={isPinModalOpen} onClose={() => setIsPinModalOpen(false)} title="Change Your Security PIN">
+      {/* ─── RECENT HISTORY ─── */}
+      {history.length > 0 && (
+        <div className="space-y-3 pt-4">
+          <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5 ml-1">
+            <Package size={14} /> Past History
+          </h3>
+          <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
+            {history.slice(0, 3).map((r, idx) => (
+              <div key={r.id} className={`p-4 flex items-center justify-between ${idx !== 0 ? 'border-t border-black/5' : ''}`}>
+                <div>
+                  <p className="text-sm font-black text-gray-800">{r.purpose || 'General Use'}</p>
+                  <p className="text-[10px] font-medium text-gray-500 mt-0.5">{formatDate(r.created_at)}</p>
+                </div>
+                <div className="flex flex-col items-end">
+                  <span className={`px-2 py-0.5 text-[9px] font-black rounded uppercase tracking-wider border ${getStatusBadge(r.status)}`}>{r.status}</span>
+                  <span className="text-[10px] font-mono text-gray-400 mt-1">#{r.id}</span>
+                </div>
+              </div>
+            ))}
+            <button onClick={() => navigate('/student/my-requests')} className="w-full p-3 text-xs font-bold text-primary bg-gray-50 hover:bg-gray-100 transition-colors border-t border-black/5">
+              View All History ➔
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── DIGITAL TICKET MODAL (QR CODE) ─── */}
+      <NeumorphModal open={!!selectedTicket} onClose={() => setSelectedTicket(null)} title="Your Digital Ticket" size="sm">
+        {selectedTicket && (
+          <div className="space-y-6 flex flex-col items-center p-2 text-center">
+            <div className="space-y-1">
+              <h3 className="text-xl font-black text-gray-800">#{selectedTicket.id}</h3>
+              <p className="text-sm font-bold text-gray-500">{selectedTicket.purpose || 'General Use'}</p>
+            </div>
+            
+            <div className="p-4 bg-white border-2 border-black/10 rounded-2xl shadow-sm inline-block">
+              <QRCodeSVG value={selectedTicket.qr_code || String(selectedTicket.id)} size={200} />
+            </div>
+            
+            <div className="w-full bg-gray-50 p-4 rounded-xl border border-black/5 space-y-2">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Present to Admin</p>
+              <p className="text-xs font-medium text-gray-600">Please have your screen bright and hold this code up to the scanner at the equipment room window.</p>
+            </div>
+            
+            <NeumorphButton variant="primary" className="w-full py-3 font-bold" onClick={() => setSelectedTicket(null)}>
+              Close Ticket
+            </NeumorphButton>
+          </div>
+        )}
+      </NeumorphModal>
+
+      {/* ─── CHANGE PIN MODAL ─── */}
+      <NeumorphModal open={isPinModalOpen} onClose={() => setIsPinModalOpen(false)} title="Change Security PIN">
         <form onSubmit={handlePinSubmit} className="space-y-4 p-2 mt-2">
           <NeumorphInput
             label="Current PIN"
@@ -148,12 +292,13 @@ export default function StudentDashboard() {
             value={pinForm.confirm_pin}
             onChange={e => handlePinChangeInput('confirm_pin', e.target.value)}
           />
-          <div className="flex justify-end gap-3 pt-4 border-t mt-4">
-            <NeumorphButton variant="outline" type="button" onClick={() => setIsPinModalOpen(false)}>Cancel</NeumorphButton>
-            <NeumorphButton variant="primary" type="submit" loading={changingPin}>Update PIN</NeumorphButton>
+          <div className="flex justify-end gap-3 pt-4 border-t border-black/5 mt-4">
+            <NeumorphButton variant="outline" type="button" onClick={() => setIsPinModalOpen(false)} className="flex-1">Cancel</NeumorphButton>
+            <NeumorphButton variant="primary" type="submit" loading={changingPin} className="flex-1">Update PIN</NeumorphButton>
           </div>
         </form>
       </NeumorphModal>
+
     </div>
   );
 }
