@@ -8,6 +8,7 @@ import { fmtDateTime } from '../../utils/date';
 import { QRCodeSVG } from 'qrcode.react';
 
 const StatusBadge = ({ status }) => {
+  const s = status?.toUpperCase() || 'UNKNOWN';
   const colors = {
     'PENDING':            'bg-amber-50 text-amber-800 border-amber-200',
     'PENDING APPROVAL':   'bg-amber-50 text-amber-800 border-amber-200',
@@ -18,9 +19,10 @@ const StatusBadge = ({ status }) => {
     'REJECTED':           'bg-red-50 text-red-800 border-red-200',
     'CANCELLED':          'bg-red-50 text-red-800 border-red-200',
     'EXPIRED':            'bg-gray-100 text-gray-600 border-gray-300',
+    'EXPIRED (VOID)':     'bg-gray-100 text-gray-600 border-gray-300',
   };
-  const colorClass = colors[status] || 'bg-gray-100 text-gray-800 border-gray-200';
-  return <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${colorClass}`}>{status}</span>;
+  const colorClass = colors[s] || 'bg-gray-100 text-gray-800 border-gray-200';
+  return <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${colorClass}`}>{s}</span>;
 };
 
 export default function MyRequests() {
@@ -32,7 +34,6 @@ export default function MyRequests() {
 
   useEffect(() => {
     if (user?.id) {
-      // Changed requester_id back to user_id to fix the 400 error!
       listRequests({ user_id: user.id })
         .then(r => setRequests(r.data?.data ?? r.data ?? []))
         .catch(() => toast.error('Failed to load request history'))
@@ -42,13 +43,13 @@ export default function MyRequests() {
 
   const activeRequests = useMemo(() => {
     return requests.filter(r => 
-      ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'PARTIALLY RETURNED'].includes(r.status)
+      ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(r.status?.toUpperCase())
     );
   }, [requests]);
 
   const historyRequests = useMemo(() => {
     return requests.filter(r => 
-      ['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED'].includes(r.status)
+      ['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'EXPIRED (VOID)'].includes(r.status?.toUpperCase())
     );
   }, [requests]);
 
@@ -97,8 +98,8 @@ export default function MyRequests() {
               <p className="text-lg font-black text-gray-700 mb-1">No {activeTab === 'active' ? 'Active' : 'Past'} Requests</p>
               <p className="text-sm font-medium text-gray-500">
                 {activeTab === 'active' 
-                  ? "You don't have any pending or partially returned requests."
-                  : "You don't have any returned or cancelled requests."}
+                  ? "You don't have any active or pending requests right now."
+                  : "You don't have any returned, expired, or cancelled requests."}
               </p>
             </div>
           ) : (
@@ -197,7 +198,7 @@ export default function MyRequests() {
                   </div>
                 </div>
 
-                {['PENDING', 'APPROVED'].includes(selectedRequest.status) && selectedRequest.qr_code && (
+                {['PENDING', 'APPROVED'].includes(selectedRequest.status?.toUpperCase()) && selectedRequest.qr_code && (
                   <div className="mt-6 flex flex-col items-center justify-center p-6 border-2 border-dashed border-black/10 rounded-3xl bg-white/50 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-primary/5 rounded-full blur-3xl pointer-events-none group-hover:bg-primary/10 transition-colors" />
                     <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 relative z-10">Your Request QR Code</p>
