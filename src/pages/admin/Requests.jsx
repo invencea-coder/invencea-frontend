@@ -90,7 +90,7 @@ const getTimeRange = (r) => {
 const getMinsLeft     = (d) => d ? Math.ceil((toPHTime(d) - toPHTime(new Date())) / 60000) : null;
 
 const isExpiredRow = (r) => {
-  if (!['PENDING', 'APPROVED', 'PENDING APPROVAL'].includes(r.status)) return false;
+  if (!['PENDING', 'APPROVED', 'PENDING APPROVAL'].includes(r.status?.toUpperCase())) return false;
   const now = toPHTime(new Date());
 
   if (r.pickup_datetime) {
@@ -258,7 +258,7 @@ function ItemRow({ item, inventory, setFn }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function AdminRequests() {
-  const { user } = useAuth(); // ⚡ GET USER TO FILTER BY ROOM
+  const { user } = useAuth(); 
 
   const [requests, setRequests]     = useState([]);
   const [inventory, setInventory]   = useState([]);
@@ -267,7 +267,6 @@ export default function AdminRequests() {
 
   const [viewMode, setViewMode] = useState('calendar');
 
-  // Layout & UI State
   const [sidebarOpen, setSidebarOpen] = useState(true); 
   const [expandedRow, setExpandedRow] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -282,7 +281,6 @@ export default function AdminRequests() {
   const [cameraModal, setCameraModal]     = useState(false);
   const [issuing, setIssuing]             = useState(false);
 
-  // Issue Flow State
   const [issueModal, setIssueModal]       = useState(false);
   const [selectedReq, setSelectedReq]     = useState(null);
   const [adjustedItems, setAdjustedItems] = useState([]);
@@ -291,7 +289,6 @@ export default function AdminRequests() {
   const [issueDate, setIssueDate]         = useState('');
   const [issueTime, setIssueTime]         = useState('');
 
-  // Approve Flow State
   const [approveModal, setApproveModal]   = useState(false);
   const [approveReq, setApproveReq]       = useState(null);
 
@@ -331,7 +328,6 @@ export default function AdminRequests() {
     return () => clearInterval(interval);
   }, [issueModal, selectedReq]);
 
-  // ⚡ FIX: Filter by room_id in the API calls
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
@@ -345,12 +341,7 @@ export default function AdminRequests() {
       if (myRoom) setIsRoomLocked(!myRoom.is_available);
       
       let fetchedReqs = reqRes.data?.data ?? reqRes.data ?? [];
-
-      // Local safety filter for requests
-      if (user?.room_id) {
-        fetchedReqs = fetchedReqs.filter(r => String(r.room_id) === String(user.room_id) || !r.room_id);
-      }
-
+      if (user?.room_id) fetchedReqs = fetchedReqs.filter(r => String(r.room_id) === String(user.room_id) || !r.room_id);
       setRequests(fetchedReqs.map(r => ({ ...r, isExpired: isExpiredRow(r) })));
       
       const combined = [
@@ -365,13 +356,9 @@ export default function AdminRequests() {
 
   useEffect(() => { load(); }, [load]);
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // ⚡ SOCKET LIVE EVENTS & NOTIFICATIONS ⚡
-  // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const sock = io(SOCKET_URL);
     const loadCooldownRef = { current: false };
-
     const debouncedLoad = () => {
       if (loadCooldownRef.current) return;
       loadCooldownRef.current = true;
@@ -379,46 +366,26 @@ export default function AdminRequests() {
       setTimeout(() => { loadCooldownRef.current = false; }, 5000);
     };
 
-    // Helper to check if a live event belongs to THIS admin's room.
-    // Logic: if the admin is assigned to a specific room, REQUIRE the payload
-    // to carry an explicit matching room_id. A missing room_id means the backend
-    // didn't scope the event — treat it as "not mine" to avoid cross-room reloads.
     const isMyRoom = (payload) => {
-      if (!user?.room_id) return true; // Super-admin / unscoped: receives all events
+      if (!user?.room_id) return true; 
       const targetRoom = payload?.room_id || payload?.roomId;
       return !!targetRoom && String(targetRoom) === String(user.room_id);
     };
 
-    sock.on('inventory-updated', (payload) => {
-      if (isMyRoom(payload)) debouncedLoad();
-    });
-
-    sock.on('request-issued', (payload) => {
-      if (isMyRoom(payload)) debouncedLoad();
-    });
-
-    // 🚨 STRICTLY FILTERED NEW REQUEST NOTIFICATION
+    sock.on('inventory-updated', (payload) => { if (isMyRoom(payload)) debouncedLoad(); });
+    sock.on('request-issued', (payload) => { if (isMyRoom(payload)) debouncedLoad(); });
     sock.on('new-request', (payload) => {
       if (isMyRoom(payload)) {
-        toast.success(`New request #${payload.id} submitted!`, {
-          icon: '🔔',
-          duration: 6000,
-          id: `new-req-${payload.id}`
-        });
+        toast.success(`New request #${payload.id} submitted!`, { icon: '🔔', duration: 6000, id: `new-req-${payload.id}` });
         debouncedLoad();
       }
     });
 
-    // 🚨 STRICTLY FILTERED DEADLINE WARNINGS
     sock.on('deadline-warning', (payload) => {
       if (!isMyRoom(payload)) return; 
-
       setNotifications(p => [{ id: Date.now(), ...payload, read: false, ts: new Date() }, ...p.slice(0, 49)]);
-      if (['overdue', 'critical'].includes(payload.level)) {
-        toast.error(payload.message, { id: `dl-${payload.requestId}`, duration: 8000 });
-      } else {
-        toast(payload.message, { id: `dl-${payload.requestId}`, duration: 6000, icon: '⏰' });
-      }
+      if (['overdue', 'critical'].includes(payload.level)) toast.error(payload.message, { id: `dl-${payload.requestId}`, duration: 8000 });
+      else toast(payload.message, { id: `dl-${payload.requestId}`, duration: 6000, icon: '⏰' });
     });
 
     return () => sock.disconnect();
@@ -479,18 +446,8 @@ export default function AdminRequests() {
     };
   }, [requests, selectedDate]);
 
-  const overdueQueue = useMemo(() =>
-    requests.filter(r =>
-      ['ISSUED', 'PARTIALLY RETURNED'].includes(r.status) &&
-      deadlineUrgency(r.return_deadline) === 'overdue'
-    ),
-  [requests]);
-
-  const pendingQueue = useMemo(() =>
-    requests.filter(r =>
-      ['PENDING', 'PENDING APPROVAL'].includes(r.status) && !r.isExpired
-    ),
-  [requests]);
+  const overdueQueue = useMemo(() => requests.filter(r => ['ISSUED', 'PARTIALLY RETURNED'].includes(r.status) && deadlineUrgency(r.return_deadline) === 'overdue'), [requests]);
+  const pendingQueue = useMemo(() => requests.filter(r => ['PENDING', 'PENDING APPROVAL'].includes(r.status) && !r.isExpired), [requests]);
 
   const handleCalendarDateSelect = useCallback((dateStr) => {
     if (!dateStr) { setSelectedDate(null); return; }
@@ -500,23 +457,13 @@ export default function AdminRequests() {
     setViewMode('list'); 
   }, []);
 
-  const clearDateFilter = useCallback(() => {
-    setSelectedDate(null);
-  }, []);
+  const clearDateFilter = useCallback(() => { setSelectedDate(null); }, []);
 
-  // ── Actions ──────────────────────────────────────────────────────────────
-  
   const handleApproveClick = (req, e) => {
     e?.stopPropagation();
     if (isRoomLocked) return;
-    
-    const isReservation = req.pickup_datetime || req.pickup_start;
-    if (isReservation) {
-      setApproveReq(req);
-      setApproveModal(true);
-    } else {
-      handleApproveSubmit(req.id, req.requester_email); 
-    }
+    if (req.pickup_datetime || req.pickup_start) { setApproveReq(req); setApproveModal(true); } 
+    else { handleApproveSubmit(req.id, req.requester_email); }
   };
 
   const handleApproveSubmit = async (id, emailStr = null) => {
@@ -524,8 +471,7 @@ export default function AdminRequests() {
       toast.loading('Approving…', { id: 'act' });
       await approveRequest(id, emailStr ? { email: emailStr } : {});
       toast.success('Approved!', { id: 'act' });
-      setApproveModal(false);
-      load(true);
+      setApproveModal(false); load(true);
     } catch (err) { toast.error(err?.response?.data?.message || 'Failed', { id: 'act' }); }
   };
 
@@ -550,11 +496,17 @@ export default function AdminRequests() {
     }
 
     setSelectedReq(req);
-    if (req.pickup_end) {
+
+    // 🚨 FIXED: Override with user's expected return time!
+    if (req.return_deadline) {
+      setIssueDate(getPHTDateString(req.return_deadline));
+      setIssueTime(getPHTTimeString(req.return_deadline));
+    } else if (req.pickup_end) {
       setIssueDate(getPHTDateString(req.pickup_end)); setIssueTime('17:00');
     } else {
       setIssueDate(getPHTDateString(new Date())); setIssueTime('22:00');
     }
+
     setAdjustedItems((req.items || []).map((i, idx) => {
       const isQtyMode = !!i.stock_id;
       let a = i.assigned_to || 'Requester';
@@ -713,7 +665,6 @@ export default function AdminRequests() {
     });
   };
 
-  // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-[calc(100vh-4rem)] overflow-hidden bg-gray-50/40 relative">
 
@@ -1064,8 +1015,8 @@ export default function AdminRequests() {
             <div className="grid grid-cols-1 gap-2 text-sm">
               <p><span className="font-bold text-blue-800">Borrower:</span> <span className="text-blue-900">{approveReq?.requester_name || approveReq?.student_id}</span></p>
               <p><span className="font-bold text-blue-800">Scheduled Pickup:</span> <span className="text-blue-900">{fmtDateTimeFull(approveReq?.pickup_datetime || approveReq?.pickup_start)}</span></p>
-              {approveReq?.pickup_end && (
-                <p><span className="font-bold text-blue-800">Return Deadline:</span> <span className="text-blue-900">{fmtDateTimeFull(approveReq.pickup_end)}</span></p>
+              {approveReq?.return_deadline && (
+                <p><span className="font-bold text-emerald-700">Expected Return:</span> <span className="text-emerald-900">{fmtDateTimeFull(approveReq.return_deadline)}</span></p>
               )}
             </div>
             {approveReq?.requester_email && (
@@ -1093,7 +1044,7 @@ export default function AdminRequests() {
                 <p className="text-xs font-black text-blue-800">Reserved Time Slot</p>
                 <p className="text-[11px] text-blue-700 font-medium mt-0.5">
                   {fmtDateTimeFull(getSlotTime(selectedReq))}
-                  {selectedReq.pickup_end && <> → {fmtDateTimeFull(selectedReq.pickup_end)}</>}
+                  {selectedReq.return_deadline && <> → {fmtDateTimeFull(selectedReq.return_deadline)}</>}
                 </p>
               </div>
             </div>

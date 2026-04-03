@@ -55,7 +55,7 @@ export default function NewRequest() {
     user?.room_id && user.room_id !== 'null' && user.room_id !== 'undefined' ? String(user.room_id) : '',
   [user?.room_id]);
 
-  const [viewMode, setViewMode] = useState('calendar'); // 'calendar' | 'reserve'
+  const [viewMode, setViewMode] = useState('calendar');
   const [availableRooms, setAvailableRooms]   = useState([]);
   const [selectedRoomId, setSelectedRoomId]   = useState('');
   const [inventory, setInventory]             = useState([]);
@@ -65,6 +65,7 @@ export default function NewRequest() {
   const [resType, setResType]       = useState('slot');
   const [pickupDate, setPickupDate] = useState('');
   const [pickupTime, setPickupTime] = useState('');
+  const [returnTime, setReturnTime] = useState(''); // 🚨 ADDED: Expected Return Time
   const [rangeStart, setRangeStart] = useState('');
   const [rangeEnd, setRangeEnd]     = useState('');
 
@@ -171,7 +172,6 @@ export default function NewRequest() {
     toast.success(`Date pre-filled: ${dateStr}`, { icon: '📅', duration: 2000 });
   }, []);
 
-  // ⚡ BULLETPROOF CART LOGIC
   const addToCart = item => {
     if (isRoomClosed || item._avail <= 0) return;
     const ex = cart.find(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id));
@@ -188,12 +188,7 @@ export default function NewRequest() {
   const updateCartField = (val, item) => {
     const qty = parseInt(val) || 0;
     if (qty <= 0) { removeFromCart(item); return; }
-    
-    // Warn user if they try to type a number higher than stock
-    if (qty > item._avail) {
-      toast.error(`Stock limit reached: Only ${item._avail} available right now!`, { id: `stock-warn` });
-    }
-    
+    if (qty > item._avail) toast.error(`Stock limit reached: Only ${item._avail} available right now!`, { id: `stock-warn` });
     setCart(cart.map(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id) 
       ? { ...c, req_qty: Math.min(qty, item._avail) } 
       : c));
@@ -226,28 +221,35 @@ export default function NewRequest() {
     if (!finalPurpose)     return toast.error('Please tell us the purpose of this request.');
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email || !emailRegex.test(email)) return toast.error('Please provide a valid email address.');
-    if (resType === 'slot' && (!pickupDate || !pickupTime)) return toast.error('Please set a date and time for pickup.');
-    if (resType === 'slot' && pickupWindow?.isPast) return toast.error('Your pickup time has already passed. Please choose a future time.');
+    
+    // 🚨 ADDED: Return Time Validation
+    if (resType === 'slot') {
+      if (!pickupDate || !pickupTime || !returnTime) return toast.error('Please complete all Date, Pickup Time, and Expected Return Time fields.');
+      if (pickupWindow?.isPast) return toast.error('Your pickup time has already passed. Please choose a future time.');
+      if (returnTime <= pickupTime) return toast.error('Expected Return Time must be later than the Pickup Time.');
+    }
     if (resType === 'range' && (!rangeStart || !rangeEnd)) return toast.error('Please select both a start and end date.');
 
     setSubmitting(true);
     try {
       const payload = {
         room_id: selectedRoomId, purpose: finalPurpose, email,
-        // ⚡ FIX: Extremely safe payload mapping guaranteeing both qty names and fallback IDs
         items: cart.map(c => {
-          if (c.inventory_mode === 'quantity') {
-            return { inventory_type_id: c.inventory_type_id, stock_id: c.stock_id || c.id, qty_requested: c.req_qty, quantity: c.req_qty };
-          }
-          if (c.kind === 'consumable') {
-            return { inventory_type_id: c.inventory_type_id, consumable_id: c.consumable_id || c.id || c.item_id, quantity: c.req_qty, qty_requested: c.req_qty };
-          }
+          if (c.inventory_mode === 'quantity') return { inventory_type_id: c.inventory_type_id, stock_id: c.stock_id || c.id, qty_requested: c.req_qty, quantity: c.req_qty };
+          if (c.kind === 'consumable') return { inventory_type_id: c.inventory_type_id, consumable_id: c.consumable_id || c.id || c.item_id, quantity: c.req_qty, qty_requested: c.req_qty };
           return { inventory_type_id: c.inventory_type_id, quantity: c.req_qty, qty_requested: c.req_qty };
         }),
       };
       
-      if (resType === 'slot')  payload.pickup_datetime = `${pickupDate}T${pickupTime}:00+08:00`;
-      if (resType === 'range') { payload.pickup_start = `${rangeStart}T08:00:00+08:00`; payload.pickup_end = `${rangeEnd}T22:00:00+08:00`; }
+      // 🚨 ADDED: Map expected return_deadline
+      if (resType === 'slot') {
+        payload.pickup_datetime = `${pickupDate}T${pickupTime}:00+08:00`;
+        payload.return_deadline = `${pickupDate}T${returnTime}:00+08:00`;
+      }
+      if (resType === 'range') { 
+        payload.pickup_start = `${rangeStart}T08:00:00+08:00`; 
+        payload.pickup_end = `${rangeEnd}T22:00:00+08:00`; 
+      }
       
       const res = await createRequest(payload);
       setSuccessData(res.data.data || res.data);
@@ -258,7 +260,7 @@ export default function NewRequest() {
 
   const resetAll = useCallback(() => {
     setSuccessData(null); setConfirmClose(false); setCart([]); setPurpose(''); setCustomPurpose('');
-    setResType('slot'); setPickupDate(''); setPickupTime(''); setRangeStart(''); setRangeEnd('');
+    setResType('slot'); setPickupDate(''); setPickupTime(''); setReturnTime(''); setRangeStart(''); setRangeEnd('');
     setInventorySearch(''); setCalendarSelectedDate(null); setViewMode('calendar');
     if (!initialRoom) setSelectedRoomId('');
   }, [initialRoom]);
@@ -276,13 +278,7 @@ export default function NewRequest() {
       <div className={`flex items-center justify-between p-3.5 border rounded-2xl transition-all group ${disabled ? 'opacity-50 grayscale bg-gray-50/50 cursor-not-allowed' : inCart ? 'bg-primary/5 border-primary/30 cursor-pointer' : 'bg-white/80 border-black/10 hover:border-primary/40 hover:shadow-md cursor-pointer'}`} onClick={() => !disabled && addToCart(item)}>
         <div className="flex-1 min-w-0 mr-3">
           <p className={`font-black text-sm line-clamp-2 transition-colors ${disabled ? 'text-gray-500' : 'text-gray-800 group-hover:text-primary'}`} title={item.name}>{item.name}</p>
-          
-          {selectedRoomId === '3' && meta.authors && (
-            <p className="text-[10px] text-gray-500 line-clamp-1 mt-0.5 font-medium">
-              {meta.authors} <span className="font-mono text-blue-500 font-bold ml-1">({meta.year})</span>
-            </p>
-          )}
-          
+          {selectedRoomId === '3' && meta.authors && <p className="text-[10px] text-gray-500 line-clamp-1 mt-0.5 font-medium">{meta.authors} <span className="font-mono text-blue-500 font-bold ml-1">({meta.year})</span></p>}
           <div className="flex items-center gap-2 mt-1.5">
             <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider ${badge.cls}`}>{badge.label}</span>
             <span className={`text-[10px] font-bold ${item._avail > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{sub}</span>
@@ -305,12 +301,7 @@ export default function NewRequest() {
         </div>
         <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded-xl border border-black/5">
           <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Qty</span>
-          <input 
-            type="number" min="1" max={item._avail} 
-            value={item.req_qty} 
-            onChange={e => updateCartField(parseInt(e.target.value), item)} 
-            className="w-10 bg-transparent text-center text-sm font-black text-primary outline-none" 
-          />
+          <input type="number" min="1" max={item._avail} value={item.req_qty} onChange={e => updateCartField(parseInt(e.target.value), item)} className="w-10 bg-transparent text-center text-sm font-black text-primary outline-none" />
         </div>
         <button onClick={() => removeFromCart(item)} className="p-2 text-red-400 hover:bg-red-100 hover:text-red-600 rounded-xl transition-colors flex-shrink-0"><Trash2 size={16} /></button>
       </div>
@@ -319,15 +310,12 @@ export default function NewRequest() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] relative bg-slate-50 dark:bg-darkSurface z-0 overflow-hidden">
-      
-      {/* ⚡ BACKGROUND BLOBS ⚡ */}
       <div className="absolute inset-0 pointer-events-none -z-10">
         <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px]" />
         <div className="absolute top-[40%] -right-[10%] w-[40%] h-[40%] rounded-full bg-blue-400/10 blur-[100px]" />
         <div className="absolute -bottom-[10%] left-[20%] w-[40%] h-[40%] rounded-full bg-emerald-400/10 blur-[100px]" />
       </div>
 
-      {/* ── TOP BAR ── */}
       <div className="bg-white/80 backdrop-blur-xl border-b border-white/50 px-4 md:px-8 py-3.5 flex flex-col sm:flex-row items-center justify-between shadow-sm z-10 gap-3 flex-shrink-0">
         <div className="flex items-center gap-4 w-full sm:w-auto">
           <div className="w-10 h-10 rounded-2xl bg-primary/10 items-center justify-center hidden sm:flex shrink-0 shadow-inner">
@@ -337,15 +325,9 @@ export default function NewRequest() {
             <h2 className="text-base md:text-lg font-black text-gray-800 tracking-tight">Equipment Reservation</h2>
             <div className="flex items-center gap-1.5 mt-0.5">
               <MapPin size={12} className="text-primary flex-shrink-0" />
-              <select
-                className="bg-transparent text-xs font-bold text-gray-600 outline-none cursor-pointer w-full text-ellipsis"
-                value={selectedRoomId}
-                onChange={e => { setSelectedRoomId(e.target.value); setCart([]); }}
-                disabled={!!initialRoom}>
+              <select className="bg-transparent text-xs font-bold text-gray-600 outline-none cursor-pointer w-full text-ellipsis" value={selectedRoomId} onChange={e => { setSelectedRoomId(e.target.value); setCart([]); }} disabled={!!initialRoom}>
                 <option value="" disabled>— Select Room First —</option>
-                {availableRooms.map(r => (
-                  <option key={r.id} value={r.id}>{r.is_available ? '🟢' : '🔴'} {r.name || r.code}</option>
-                ))}
+                {availableRooms.map(r => <option key={r.id} value={r.id}>{r.is_available ? '🟢' : '🔴'} {r.name || r.code}</option>)}
               </select>
             </div>
           </div>
@@ -353,30 +335,18 @@ export default function NewRequest() {
 
         <div className="flex items-center gap-3 flex-shrink-0 w-full sm:w-auto justify-end">
           {viewMode === 'calendar' && cart.length > 0 && (
-            <button onClick={() => setViewMode('reserve')}
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-xs font-black shadow-md shadow-primary/20 animate-in fade-in duration-200 hover:-translate-y-0.5 transition-transform">
-              <ShoppingBag size={14} />
-              {cart.length} item{cart.length !== 1 ? 's' : ''} ready
-              <ArrowRight size={12} />
+            <button onClick={() => setViewMode('reserve')} className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-xs font-black shadow-md shadow-primary/20 hover:-translate-y-0.5 transition-transform">
+              <ShoppingBag size={14} /> {cart.length} item{cart.length !== 1 ? 's' : ''} ready <ArrowRight size={12} />
             </button>
           )}
           <div className="flex bg-white/50 p-1 rounded-xl border border-black/5 shadow-sm">
-            <button onClick={() => setViewMode('calendar')}
-              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black transition-all ${viewMode === 'calendar' ? 'bg-white text-primary shadow-sm border border-black/5' : 'text-gray-500 hover:text-gray-700'}`}>
-              <CalendarDays size={14} /> Schedule
-            </button>
-            <button onClick={() => setViewMode('reserve')} disabled={!selectedRoomId}
-              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black transition-all disabled:opacity-40 ${viewMode === 'reserve' ? 'bg-white text-primary shadow-sm border border-black/5' : 'text-gray-500 hover:text-gray-700'}`}>
-              <ShoppingBag size={14} /> Reserve Items
-            </button>
+            <button onClick={() => setViewMode('calendar')} className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black transition-all ${viewMode === 'calendar' ? 'bg-white text-primary shadow-sm border border-black/5' : 'text-gray-500 hover:text-gray-700'}`}><CalendarDays size={14} /> Schedule</button>
+            <button onClick={() => setViewMode('reserve')} disabled={!selectedRoomId} className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black transition-all disabled:opacity-40 ${viewMode === 'reserve' ? 'bg-white text-primary shadow-sm border border-black/5' : 'text-gray-500 hover:text-gray-700'}`}><ShoppingBag size={14} /> Reserve Items</button>
           </div>
         </div>
       </div>
 
-      {/* ── MAIN CONTENT ── */}
       <div className="flex-1 overflow-y-auto relative z-10 custom-scrollbar">
-
-        {/* ════ CALENDAR VIEW ════ */}
         {viewMode === 'calendar' && (
           <div className="flex flex-col h-full">
             {!selectedRoomId ? (
@@ -397,50 +367,31 @@ export default function NewRequest() {
               </div>
             ) : (
               <div className="flex flex-col h-full p-4 md:p-8 gap-4 max-w-6xl mx-auto w-full animate-in fade-in duration-500">
-
                 <div className="flex flex-col sm:flex-row gap-3 flex-shrink-0">
                   <div className="flex-1 flex items-start gap-3 bg-white/70 backdrop-blur-md border border-white/50 rounded-2xl px-5 py-4 shadow-sm">
                     <div className="p-1.5 bg-primary/10 rounded-lg"><Sparkles size={16} className="text-primary flex-shrink-0" /></div>
-                    <p className="text-xs text-gray-600 font-medium leading-relaxed mt-1">
-                      Click any date to see existing bookings. Then hit <strong className="text-primary font-black">"Reserve on this date"</strong> to book.
-                    </p>
+                    <p className="text-xs text-gray-600 font-medium leading-relaxed mt-1">Click any date to see existing bookings. Then hit <strong className="text-primary font-black">"Reserve on this date"</strong> to book.</p>
                   </div>
                   <div className="flex-1 flex items-start gap-3 bg-white/70 backdrop-blur-md border border-white/50 rounded-2xl px-5 py-4 shadow-sm">
                     <div className="p-1.5 bg-amber-100 rounded-lg"><Lightbulb size={16} className="text-amber-600 flex-shrink-0" /></div>
-                    <p className="text-xs text-gray-600 font-medium leading-relaxed mt-1">
-                      Use the <strong className="text-amber-600 font-black">Magic Filter</strong> inside the calendar to search when an item is in use.
-                    </p>
+                    <p className="text-xs text-gray-600 font-medium leading-relaxed mt-1">Use the <strong className="text-amber-600 font-black">Magic Filter</strong> inside the calendar to search when an item is in use.</p>
                   </div>
                 </div>
-
                 <div className="flex-1 bg-white/80 backdrop-blur-xl rounded-3xl shadow-sm border border-white/50 overflow-hidden min-h-0">
-                  <AvailabilityCalendar
-                    roomId={selectedRoomId}
-                    onDateSelect={handleCalendarDateSelect}
-                    selectedDate={calendarSelectedDate}
-                  />
+                  <AvailabilityCalendar roomId={selectedRoomId} onDateSelect={handleCalendarDateSelect} selectedDate={calendarSelectedDate} />
                 </div>
-
                 {calendarSelectedDate && (
                   <div className="flex-shrink-0 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white/90 backdrop-blur-xl border border-primary/20 rounded-2xl p-4 shadow-lg animate-in slide-in-from-bottom-4 duration-300">
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="p-2 bg-primary/10 rounded-xl"><CalendarDays size={20} className="text-primary flex-shrink-0" /></div>
                       <div className="min-w-0">
                         <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Selected date</p>
-                        <p className="text-base font-black text-gray-800 tracking-tight truncate">
-                          {new Date(calendarSelectedDate + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                        </p>
+                        <p className="text-base font-black text-gray-800 tracking-tight truncate">{new Date(calendarSelectedDate + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0 w-full sm:w-auto">
-                      <button onClick={() => setCalendarSelectedDate(null)} className="text-xs font-bold text-gray-400 hover:text-gray-600 px-4 py-3 rounded-xl hover:bg-gray-100 transition-colors w-full sm:w-auto">
-                        Clear
-                      </button>
-                      <button
-                        onClick={() => handleReserveOnDate(calendarSelectedDate)}
-                        className="flex items-center justify-center gap-2 py-3 px-6 bg-primary text-white rounded-xl text-sm font-black shadow-md shadow-primary/20 hover:bg-primary/90 transition-all hover:-translate-y-0.5 w-full sm:w-auto">
-                        <CalendarClock size={16} /> Reserve on this date <ArrowRight size={14} />
-                      </button>
+                      <button onClick={() => setCalendarSelectedDate(null)} className="text-xs font-bold text-gray-400 hover:text-gray-600 px-4 py-3 rounded-xl hover:bg-gray-100 transition-colors w-full sm:w-auto">Clear</button>
+                      <button onClick={() => handleReserveOnDate(calendarSelectedDate)} className="flex items-center justify-center gap-2 py-3 px-6 bg-primary text-white rounded-xl text-sm font-black shadow-md shadow-primary/20 hover:bg-primary/90 transition-all hover:-translate-y-0.5 w-full sm:w-auto"><CalendarClock size={16} /> Reserve on this date <ArrowRight size={14} /></button>
                     </div>
                   </div>
                 )}
@@ -449,32 +400,11 @@ export default function NewRequest() {
           </div>
         )}
 
-        {/* ════ RESERVE FORM ════ */}
         {viewMode === 'reserve' && (
           <>
-            {!selectedRoomId ? (
-              <div className="flex flex-col items-center justify-center h-full py-20 px-4 text-center">
-                <div className="w-24 h-24 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center mb-6 shadow-sm border border-white/50"><MapPin size={40} className="text-gray-400" /></div>
-                <h3 className="text-2xl font-black text-gray-800 tracking-tight">Where are you borrowing from?</h3>
-                <p className="text-sm font-medium text-gray-500 mt-2 max-w-sm">Please select a room from the dropdown in the top bar.</p>
-              </div>
-            ) : isRoomClosed ? (
-              <div className="max-w-3xl mx-auto p-4 md:p-8 pt-12 animate-in fade-in zoom-in-95 duration-500">
-                <div className="p-6 md:p-8 flex flex-col sm:flex-row items-center gap-6 bg-red-50/90 backdrop-blur-md border-2 border-red-200 rounded-3xl shadow-sm">
-                  <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-inner"><DoorClosed size={32} className="text-red-500" /></div>
-                  <div className="text-center sm:text-left">
-                    <p className="font-black text-red-800 text-xl tracking-tight">This room is currently closed</p>
-                    <p className="text-sm text-red-600 mt-1 font-medium">"{currentRoom.unavailable_reason || 'No reason provided.'}"</p>
-                  </div>
-                </div>
-              </div>
-            ) : (
+            {!selectedRoomId ? null : isRoomClosed ? null : (
               <div className="max-w-6xl mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start pb-20 animate-in fade-in duration-500">
-
-                {/* LEFT: Form steps */}
                 <div className="lg:col-span-7 flex flex-col gap-6">
-
-                  {/* Step 1 — Type */}
                   <div className="bg-white/70 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/50 shadow-sm relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-blue-400" />
                     <SectionHead step={1} label="Reservation Type" />
@@ -482,9 +412,7 @@ export default function NewRequest() {
                       {TYPE_CFG.map(({ id, Icon, label, sub, ring, icon, badge }) => {
                         const active = resType === id;
                         return (
-                          <button key={id}
-                            onClick={() => { setResType(id); setPickupDate(''); setPickupTime(''); setRangeStart(''); setRangeEnd(''); }}
-                            className={`flex flex-col items-start gap-3 p-4 rounded-2xl border-2 text-left transition-all ${active ? ring : 'border-white/50 bg-white/50 hover:border-primary/20 hover:bg-white'}`}>
+                          <button key={id} onClick={() => { setResType(id); setPickupDate(''); setPickupTime(''); setReturnTime(''); setRangeStart(''); setRangeEnd(''); }} className={`flex flex-col items-start gap-3 p-4 rounded-2xl border-2 text-left transition-all ${active ? ring : 'border-white/50 bg-white/50 hover:border-primary/20 hover:bg-white'}`}>
                             <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors shadow-inner ${active ? icon : 'bg-gray-100 text-gray-400'}`}><Icon size={20} /></div>
                             <div>
                               <p className={`text-sm font-black leading-tight tracking-tight ${active ? 'text-gray-900' : 'text-gray-700'}`}>{label}</p>
@@ -497,20 +425,28 @@ export default function NewRequest() {
                     </div>
                   </div>
 
-                  {/* Step 2 — Slot */}
                   {resType === 'slot' && (
                     <div className="bg-white/70 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/50 shadow-sm animate-in slide-in-from-top-4 duration-300">
                       <SectionHead step={2} label="Select Date & Time" />
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+                      
+                      {/* 🚨 ADDED: 3-column grid for Date, Pickup, and Expected Return */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
                         <div>
                           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">Date</label>
                           <input type="date" min={todayISO} value={pickupDate} onChange={e => setPickupDate(e.target.value)} className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer shadow-sm" />
                         </div>
                         <div>
-                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">Time</label>
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">Pickup Window</label>
                           <input type="time" value={pickupTime} onChange={e => setPickupTime(e.target.value)} className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer shadow-sm" />
                         </div>
+                        <div>
+                          <label className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-1.5 mb-1.5">
+                            <Timer size={12} /> Expected Return
+                          </label>
+                          <input type="time" value={returnTime} onChange={e => setReturnTime(e.target.value)} className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer shadow-sm" />
+                        </div>
                       </div>
+
                       {pickupWindow ? (
                         pickupWindow.isPast ? (
                           <div className="flex items-start gap-4 p-4 bg-red-50/80 backdrop-blur-md border border-red-200 rounded-2xl shadow-sm">
@@ -532,12 +468,11 @@ export default function NewRequest() {
                           </div>
                         )
                       ) : (
-                        <p className="text-xs text-gray-500 font-medium bg-white/50 border border-black/5 p-4 rounded-xl text-center">Please fill in both Date and Time to see your pickup window.</p>
+                        <p className="text-xs text-gray-500 font-medium bg-white/50 border border-black/5 p-4 rounded-xl text-center">Please fill in Date, Pickup, and Return times.</p>
                       )}
                     </div>
                   )}
 
-                  {/* Step 2 — Range */}
                   {resType === 'range' && (
                     <div className="bg-white/70 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/50 shadow-sm animate-in slide-in-from-top-4 duration-300">
                       <SectionHead step={2} label="Select Date Range" />
@@ -565,7 +500,6 @@ export default function NewRequest() {
                     </div>
                   )}
 
-                  {/* Step 3 — Equipment */}
                   <div className="bg-white/70 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/50 shadow-sm">
                     <SectionHead step={3} label="Select Equipment" />
                     <p className="text-xs text-gray-500 mb-5 font-medium leading-relaxed">
@@ -590,9 +524,7 @@ export default function NewRequest() {
                   </div>
                 </div>
 
-                {/* RIGHT: Cart + Final details */}
                 <div className="lg:col-span-5 flex flex-col gap-6 lg:sticky lg:top-6">
-
                   <div className="bg-gray-900/90 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/10 shadow-lg text-white">
                     <div className="flex items-center justify-between mb-5">
                       <h3 className="text-[11px] font-black uppercase tracking-widest flex items-center gap-2 text-gray-300">
