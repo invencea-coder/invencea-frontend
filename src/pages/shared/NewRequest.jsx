@@ -6,7 +6,7 @@ import {
   X, DoorClosed, Package, CheckCircle, CheckCircle2,
   CalendarRange, Timer, MapPin, Info,
   Clock, ShoppingBag, Camera, CalendarClock, ChevronDown, ChevronUp, Mail,
-  CalendarDays, Sparkles, Lightbulb
+  CalendarDays, Sparkles, Lightbulb, Loader2
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
