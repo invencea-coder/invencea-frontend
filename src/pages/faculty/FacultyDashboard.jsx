@@ -1,12 +1,39 @@
 // src/pages/faculty/FacultyDashboard.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, FileText, Clock } from 'lucide-react';
+import { PlusCircle, FileText, Clock, CalendarClock, Package, Loader2 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth.js';
 import { listRequests } from '../../api/requestAPI.js';
-import NeumorphCard from '../../components/ui/NeumorphCard.jsx';
-import { statusColor } from '../../utils/format.js';
-import { fmtDateTime } from '../../utils/date.js';
+
+// ── Time Formatter ────────────────────────────────────────────────────────────
+const toPHTime = (d) => {
+  if (!d) return null;
+  let str = typeof d === 'string' ? d : String(d);
+  if (str.includes('T') && !str.endsWith('Z') && !str.includes('+') && !str.includes('-')) str += 'Z';
+  return new Date(str);
+};
+
+const fmtDateTimePH = (d) => {
+  if (!d) return '—';
+  try {
+    return toPHTime(d).toLocaleString('en-US', {
+      timeZone: 'Asia/Manila', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true
+    }).replace(' at ', ', ');
+  } catch { return '—'; }
+};
+
+const statusColors = {
+  'PENDING':            'bg-amber-50 text-amber-800 border border-amber-200',
+  'PENDING APPROVAL':   'bg-amber-50 text-amber-800 border border-amber-200',
+  'APPROVED':           'bg-blue-50 text-blue-800 border border-blue-200',
+  'ISSUED':             'bg-emerald-50 text-emerald-800 border border-emerald-200',
+  'PARTIALLY RETURNED': 'bg-orange-50 text-orange-800 border border-orange-200',
+  'RETURNED':           'bg-gray-100 text-gray-600 border border-gray-200',
+  'REJECTED':           'bg-red-50 text-red-700 border border-red-200',
+  'CANCELLED':          'bg-red-50 text-red-700 border border-red-200',
+  'EXPIRED':            'bg-orange-50 text-orange-700 border border-orange-200',
+};
 
 export default function FacultyDashboard() {
   const { user } = useAuth();
@@ -15,72 +42,104 @@ export default function FacultyDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // FIX: Only fetch if we have a user, and filter by their ID
     if (user?.id) {
       listRequests({ user_id: user.id })
         .then(r => setRequests(r.data.data))
         .catch(() => {})
         .finally(() => setLoading(false));
     }
-  }, [user]); // Added user to the dependency array
+  }, [user]);
 
-  // Because 'requests' is now filtered, these counts will also be personalized!
-  const pending = requests.filter(r => r.status === 'PENDING').length;
-  const issued  = requests.filter(r => r.status === 'ISSUED').length;
+  const pending = requests.filter(r => ['PENDING', 'PENDING APPROVAL'].includes(r.status)).length;
+  const issued  = requests.filter(r => ['ISSUED', 'PARTIALLY RETURNED'].includes(r.status)).length;
 
   return (
-    <div className="space-y-6">
-      <div className="neu-card-lg p-6">
-        <p className="text-xs text-muted dark:text-darkMuted uppercase tracking-widest mb-1">Welcome back</p>
-        <h2 className="font-display text-2xl font-bold text-primary dark:text-darkText">{user?.name}</h2>
-        <p className="text-sm text-muted dark:text-darkMuted mt-1">{user?.email}</p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <NeumorphCard className="p-5 text-center">
-          <p className="text-3xl font-display font-bold text-primary dark:text-darkText">{pending}</p>
-          <p className="text-xs text-muted dark:text-darkMuted mt-1">Pending</p>
-        </NeumorphCard>
-        <NeumorphCard className="p-5 text-center">
-          <p className="text-3xl font-display font-bold text-info">{issued}</p>
-          <p className="text-xs text-muted dark:text-darkMuted mt-1">Currently Issued</p>
-        </NeumorphCard>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <NeumorphCard hover className="p-6 flex flex-col items-center gap-3 cursor-pointer" onClick={() => navigate('/faculty/new-request')}>
-          <PlusCircle size={28} className="text-primary dark:text-darkText" />
-          <span className="text-sm font-semibold text-primary dark:text-darkText">New Request</span>
-        </NeumorphCard>
-        <NeumorphCard hover className="p-6 flex flex-col items-center gap-3 cursor-pointer" onClick={() => navigate('/faculty/my-requests')}>
-          <FileText size={28} className="text-muted dark:text-darkMuted" />
-          <span className="text-sm font-semibold text-primary dark:text-darkText">My Requests</span>
-        </NeumorphCard>
-      </div>
-
-      <NeumorphCard className="p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <Clock size={15} className="text-muted" />
-          <h3 className="font-display font-semibold text-primary dark:text-darkText">Recent</h3>
-        </div>
-        {loading ? <div className="flex justify-center py-6"><div className="neu-spinner" /></div> : (
-          <div className="flex flex-col gap-2">
-            {requests.slice(0, 5).map(r => (
-              <div key={r.id} className="flex items-center justify-between neu-card-sm p-3">
-                <div>
-                  <p className="text-xs font-mono text-muted">#{r.id}</p>
-                  <p className="text-xs text-primary dark:text-darkText mt-0.5">{r.room_code || 'No room'}</p>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className={`badge ${statusColor(r.status)}`}>{r.status}</span>
-                  <span className="text-[10px] text-muted">{fmtDateTime(r.requested_time)}</span>
-                </div>
-              </div>
-            ))}
-            {requests.length === 0 && <p className="text-sm text-center text-muted py-4">No requests yet</p>}
+    <div className="min-h-screen bg-[#e0e5ec] dark:bg-darkSurface p-4 md:p-8">
+      <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in zoom-in-95 duration-500">
+        
+        {/* Header */}
+        <div className="bg-white/80 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-black/5 flex flex-col md:flex-row justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Welcome back</p>
+            <h2 className="font-display text-3xl font-black text-gray-800 tracking-tight">{user?.name}</h2>
+            <p className="text-sm font-medium text-gray-500 mt-1 flex items-center gap-1.5">
+              <CalendarClock size={14} className="text-primary" />
+              {new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Manila', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </p>
           </div>
-        )}
-      </NeumorphCard>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white/80 backdrop-blur-md border border-black/5 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm">
+            <p className="text-4xl font-black text-amber-500">{pending}</p>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-2">Pending</p>
+          </div>
+          <div className="bg-white/80 backdrop-blur-md border border-black/5 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm">
+            <p className="text-4xl font-black text-emerald-500">{issued}</p>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-2">Issued</p>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="grid grid-cols-2 gap-4">
+          <button 
+            onClick={() => navigate('/faculty/new-request')}
+            className="group bg-gradient-to-br from-primary to-primary/90 p-6 rounded-3xl shadow-md shadow-primary/20 flex flex-col items-center gap-3 hover:-translate-y-1 transition-all duration-300"
+          >
+            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center text-white group-hover:scale-110 transition-transform">
+              <PlusCircle size={24} />
+            </div>
+            <span className="text-sm font-black text-white tracking-wide">New Request</span>
+          </button>
+
+          <button 
+            onClick={() => navigate('/faculty/my-requests')}
+            className="group bg-white/80 backdrop-blur-md border border-black/5 p-6 rounded-3xl shadow-sm flex flex-col items-center gap-3 hover:-translate-y-1 hover:shadow-md transition-all duration-300"
+          >
+            <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-gray-500 group-hover:scale-110 group-hover:bg-primary/10 group-hover:text-primary transition-all">
+              <FileText size={24} />
+            </div>
+            <span className="text-sm font-black text-gray-700 tracking-wide group-hover:text-primary">My Requests</span>
+          </button>
+        </div>
+
+        {/* Recent Requests */}
+        <div className="bg-white/80 backdrop-blur-md border border-black/5 rounded-3xl p-6 shadow-sm">
+          <div className="flex items-center gap-2 mb-5">
+            <Clock size={16} className="text-primary" />
+            <h3 className="font-black text-gray-800 uppercase tracking-widest text-xs">Recent History</h3>
+          </div>
+          
+          {loading ? (
+            <div className="flex justify-center py-10"><Loader2 size={32} className="animate-spin text-primary/50" /></div>
+          ) : requests.length === 0 ? (
+            <div className="text-center py-10">
+              <Package size={32} className="mx-auto text-gray-300 mb-3" />
+              <p className="text-sm font-bold text-gray-500">No requests yet</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {requests.slice(0, 5).map(r => (
+                <div key={r.id} className="flex items-center justify-between bg-gray-50 border border-black/5 rounded-2xl p-4 transition-colors hover:border-primary/30">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-xs font-black text-gray-800">#{r.id}</p>
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${statusColors[r.status] || 'bg-gray-100 text-gray-800'}`}>
+                        {r.status}
+                      </span>
+                    </div>
+                    <p className="text-xs font-medium text-gray-500">{r.room_code || 'Global Room'}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase">{fmtDateTimePH(r.created_at || r.requested_time)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
