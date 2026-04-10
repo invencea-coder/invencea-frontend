@@ -21,23 +21,33 @@ const formatDate = (value) => {
   }
 };
 
-const resolveRequestedAt = (row) => row.created_at ?? row.requested_at ?? null;
-const resolveApprovedAt  = (row) => row.approved_time ?? row.approved_at ?? null;
-const resolveIssuedAt    = (row) => row.issued_time ?? row.issued_at ?? null;
+// ⚡ Bulletproof Time Resolvers (Handles both snake_case and camelCase)
+const resolveRequestedAt = (row) => row.created_at || row.createdAt || row.requested_at || row.requestedAt || row.requested_time || null;
+const resolveApprovedAt  = (row) => row.approved_time || row.approvedTime || row.approved_at || row.approvedAt || null;
+const resolveIssuedAt    = (row) => row.issued_time || row.issuedTime || row.issued_at || row.issuedAt || null;
 
-// ⚡ FIX: Hyper-Aggressive Return Timestamp Hunter (catches Bulk QR Scanner returns)
-const resolveReturnedAt  = (row) => {
-  // 1. Check direct request-level fields
-  if (row.last_return_time) return row.last_return_time;
-  if (row.returned_at) return row.returned_at;
-  if (row.returned_time) return row.returned_time;
-  if (row.actual_return_time) return row.actual_return_time;
+// ⚡ The Ultimate Timestamp Hunter (Catches Bulk QR, Retro-Logs, & Missing Fields)
+const resolveReturnedAt = (row) => {
+  // 1. Direct fields (snake_case & camelCase)
+  const direct = row.actual_returned_at || row.actualReturnedAt ||
+                 row.actual_return_time || row.actualReturnTime ||
+                 row.returned_at || row.returnedAt ||
+                 row.returned_time || row.returnedTime ||
+                 row.return_time || row.returnTime ||
+                 row.last_return_time || row.lastReturnTime;
+  if (direct) return direct;
 
-  // 2. Check the items array (Bulk scanner often updates items directly)
+  // 2. Deep check in items array
   if (row.items && Array.isArray(row.items)) {
     const itemTimes = row.items
       .filter(i => String(i.item_status || i.status || '').toUpperCase() === 'RETURNED')
-      .map(i => i.returned_at || i.returned_time || i.last_return_time || i.updated_at)
+      .map(i => i.actual_returned_at || i.actualReturnedAt || 
+                i.actual_return_time || i.actualReturnTime || 
+                i.returned_at || i.returnedAt || 
+                i.returned_time || i.returnedTime || 
+                i.return_time || i.returnTime || 
+                i.last_return_time || i.lastReturnTime || 
+                i.updated_at || i.updatedAt)
       .filter(Boolean);
       
     if (itemTimes.length > 0) {
@@ -47,10 +57,11 @@ const resolveReturnedAt  = (row) => {
     }
   }
 
-  // 3. Ultimate Fallback: The row's generic update timestamp
+  // 3. Ultimate Fallback: If status is RETURNED, but no specific return date exists
+  // (Common in retroactive logs where it was logged as already returned)
   const status = String(row.request_status || row.status || '').toUpperCase();
   if (status === 'RETURNED' || status === 'PARTIALLY RETURNED') {
-    return row.updated_at || null;
+    return row.updated_at || row.updatedAt || row.created_at || row.createdAt || null;
   }
   
   return null;
@@ -59,13 +70,15 @@ const resolveReturnedAt  = (row) => {
 const resolveStudentId   = (row) => row.requester_id ?? row.student_id ?? row.school_id ?? null;
 
 const getStatusColor = (status) => {
-  if (status === 'RETURNED') return 'bg-gray-100 text-gray-600 border-gray-200';
-  if (status === 'PARTIALLY RETURNED') return 'bg-orange-100 text-orange-700 border-orange-200';
-  if (status === 'ISSUED') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+  const s = String(status || '').toUpperCase();
+  if (s === 'RETURNED') return 'bg-gray-100 text-gray-600 border-gray-200';
+  if (s === 'PARTIALLY RETURNED') return 'bg-orange-100 text-orange-700 border-orange-200';
+  if (s === 'ISSUED') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
   return 'bg-blue-100 text-blue-700 border-blue-200';
 };
 
-const isValidItem = (item) => ['ISSUED', 'RETURNED', 'PARTIALLY RETURNED'].includes(item.item_status || item.status);
+// Fixed to be case-insensitive just in case
+const isValidItem = (item) => ['ISSUED', 'RETURNED', 'PARTIALLY RETURNED'].includes(String(item.item_status || item.status || '').toUpperCase());
 const getItemQty = (item) => item.quantity_issued || item.qty_requested || item.quantity || 1;
 
 // ─── CSV export ───────────────────────────────────────────────────────────────
