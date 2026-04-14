@@ -85,9 +85,9 @@ export default function RoomSettings() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold text-primary dark:text-darkText">Room Settings</h1>
+          <h1 className="font-display text-2xl font-bold text-primary dark:text-darkText">Room Availability</h1>
           <p className="text-sm text-muted dark:text-darkMuted mt-0.5">
-            Temporarily mark your room as unavailable to queue incoming requests.
+            Temporarily Close Room to Reservations.
           </p>
         </div>
         <button onClick={fetchRooms} className="neu-btn p-2.5" title="Refresh">
@@ -150,7 +150,7 @@ export default function RoomSettings() {
       {/* Reason Modal */}
       <NeumorphModal open={showReasonModal} onClose={() => setShowReasonModal(false)} title="Mark Room Unavailable">
         <div className="space-y-4 p-2">
-          <p className="text-sm text-muted">Please provide a reason why the room is unavailable. This will be shown to students.</p>
+          <p className="text-sm text-muted">Please provide a reason why the room is unavailable. This will be shown to students and faculties.</p>
           <NeumorphInput
             label="Reason"
             placeholder="e.g. Maintenance, cleaning, etc."
@@ -173,8 +173,8 @@ export default function RoomSettings() {
           <span className="text-blue-600 dark:text-blue-400 text-xs font-bold">i</span>
         </div>
         <p className="text-xs text-muted dark:text-darkMuted leading-relaxed">
-          When your room is marked <strong className="text-primary dark:text-darkText">unavailable</strong>, new borrow requests for this room will be automatically <strong className="text-primary dark:text-darkText">queued</strong> and will not proceed until the room is available again. Existing approved requests are not affected.
-        </p>
+  When your room is marked <strong className="text-primary dark:text-darkText">unavailable</strong>, new borrow requests for this room will be <strong className="text-primary dark:text-darkText">blocked</strong> and cannot be submitted. Existing approved requests are not affected.
+</p>
       </div>
     </div>
   );

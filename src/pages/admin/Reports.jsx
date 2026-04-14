@@ -21,6 +21,13 @@ const formatDate = (value) => {
   }
 };
 
+// Auto-formatter for Faculty Names
+const resolveFullName = (name) => {
+  if (!name) return '—';
+  if (name.trim() === 'Engr. Romeo') return 'Engr. Romeo T. San Gaspar';
+  return name;
+};
+
 // Helpers for the printable logbook specifically
 const formatLogDate = (dateString) => {
   if (!dateString) return '';
@@ -101,7 +108,7 @@ function exportToExcel(rows, filename, roleFilter) {
   if (!rows.length) return toast.error('Nothing to export');
   const showStudentId = roleFilter !== 'faculty';
   
-  const headers = ['Request ID', 'Status', 'Requester'];
+  const headers = ['Status', 'Requester'];
   if (showStudentId) headers.push('User ID');
   headers.push('Items (Barcodes)', 'Requested At', 'Approved At', 'Issued At', 'Returned At');
   
@@ -116,9 +123,8 @@ function exportToExcel(rows, filename, roleFilter) {
         : (r.items_summary ?? '—');
         
       const row = [
-        escape(`#${r.request_id || r.id}`),
         escape(r.request_status || r.status),
-        escape(r.requester_name)
+        escape(resolveFullName(r.requester_name))
       ];
       
       if (showStudentId) row.push(escape(r.requester_type === 'student' ? (resolveStudentId(r) ?? '—') : '—'));
@@ -249,7 +255,6 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
       <table className="bg-white">
         <thead>
           <tr>
-            {/* ⚡ Adjusted Widths: Stole 4% from Name/Item to give to Date */}
             <th rowSpan={2} style={{ width: '20%' }}>Name</th>
             <th rowSpan={2} style={{ width: '26%' }}>Item</th>
             <th colSpan={2}>Requested</th>
@@ -283,7 +288,7 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
                   {/* Name cell spans all item rows */}
                   {index === 0 && (
                     <td rowSpan={rowSpan} className="align-middle">
-                      {req.requester_name}
+                      {resolveFullName(req.requester_name)}
                     </td>
                   )}
                   
@@ -295,7 +300,6 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
                   {/* Dates, Times, and Checks span all item rows */}
                   {index === 0 && (
                     <>
-                      {/* ⚡ Added nowrap-cell to strictly prevent 2 lines */}
                       <td rowSpan={rowSpan} className="align-middle nowrap-cell">
                         {formatLogDate(reqTime)}
                       </td>
@@ -480,7 +484,7 @@ export default function Reports() {
               <table className="w-full text-left min-w-[1000px]">
                 <thead className="bg-gray-50/80 border-b border-black/5">
                   <tr>
-                    <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">Req ID / Status</th>
+                    <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">Status</th>
                     <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest">Requester</th>
                     {showStudentId && <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">User ID</th>}
                     <th className="px-6 py-4 text-xs font-black text-gray-500 uppercase tracking-widest w-1/4">Items Issued</th>
@@ -498,14 +502,13 @@ export default function Reports() {
                     return (
                       <tr key={idx} className="hover:bg-primary/[0.02] transition-colors">
                         <td className="px-6 py-4 align-top">
-                          <div className="font-mono text-xs font-black text-gray-500 mb-1.5">#{row.request_id || row.id}</div>
                           <span className={`inline-block text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider border ${getStatusColor(reqStatus)}`}>
                             {reqStatus}
                           </span>
                         </td>
 
                         <td className="px-6 py-4 align-top">
-                          <p className="font-bold text-gray-800 text-sm leading-tight">{row.requester_name}</p>
+                          <p className="font-bold text-gray-800 text-sm leading-tight">{resolveFullName(row.requester_name)}</p>
                           <span className={`text-[10px] px-2 py-0.5 rounded font-black uppercase inline-block mt-1 tracking-wider ${row.requester_type === 'faculty' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
                             {row.requester_type}
                           </span>

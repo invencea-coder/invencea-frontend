@@ -10,11 +10,11 @@ import {
 const navByRole = {
   admin: [
     { label: 'Dashboard', icon: LayoutDashboard, to: '/admin' },
-    { label: 'Inventory', icon: Package, to: '/admin/inventory' },
-    { label: 'Process Requests', icon: ClipboardList, to: '/admin/requests', hasBadge: true },
+    { label: 'View Inventory', icon: Package, to: '/admin/inventory' },
+    { label: 'Manage Requests', icon: ClipboardList, to: '/admin/requests', hasBadge: true },
     { label: 'Process Return', icon: ScanBarcode, to: '/admin/return-scanner' },
     { label: 'Reports & History', icon: BarChart3, to: '/admin/reports' },
-    { label: 'Rooms', icon: DoorOpen, to: '/admin/rooms' },
+    { label: 'Room Availability', icon: DoorOpen, to: '/admin/rooms' },
   ],
   faculty: [
     { label: 'Dashboard', icon: LayoutDashboard, to: '/faculty' },
