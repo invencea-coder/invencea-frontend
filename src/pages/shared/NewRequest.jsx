@@ -1,12 +1,26 @@
-// src/pages/shared/NewRequest.jsx
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+/**
+ * NewRequest.jsx — Lab Equipment Reservation
+ *
+ * Architecture decisions:
+ * - Sub-components are defined OUTSIDE the main component to avoid
+ * recreation on every render (the biggest performance bug in the original).
+ * - Cart distinguishes between "unit" items (physical, qty always 1) and
+ * "quantity/consumable" items (fungible, qty can be > 1).
+ * - All time comparisons are done in explicit UTC/PHT to avoid DST bugs.
+ * - Socket listener uses a stable ref so it never needs to be in dep arrays.
+ * - Derived state is computed once per render via useMemo, not scattered.
+ */
+
+import React, {
+  useState, useEffect, useMemo, useCallback, useRef, memo,
+} from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
-  Search, Plus, Trash2, Calendar, ArrowRight, AlertTriangle,
-  X, DoorClosed, Package, CheckCircle, CheckCircle2,
-  CalendarRange, Timer, MapPin, Info,
-  Clock, ShoppingBag, Camera, CalendarClock, ChevronDown, ChevronUp, Mail,
-  CalendarDays, Sparkles, Lightbulb, Loader2
+  Search, Plus, Minus, Trash2, AlertTriangle,
+  DoorClosed, CheckCircle2, CheckCircle, Timer, MapPin,
+  ShoppingBag, Camera, X, CalendarDays, Loader2, PackageX,
+  Clock, Mail, ChevronDown, ChevronUp, Layers, Check, Lock,
+  ArrowLeft, ArrowDown,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
@@ -14,622 +28,1754 @@ import { io } from 'socket.io-client';
 import api from '../../api/axiosClient';
 import { listInventory } from '../../api/inventoryAPI';
 import { createRequest } from '../../api/requestAPI';
-import NeumorphButton from '../../components/ui/NeumorphButton';
-import NeumorphInput from '../../components/ui/NeumorphInput';
 import AvailabilityCalendar from '../../components/AvailabilityCalendar';
 
-const SOCKET_URL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:4000';
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
 
-const toPHTime = (d) => {
-  if (!d) return null;
-  let str = typeof d === 'string' ? d : String(d);
-  if (str.includes('T') && !str.endsWith('Z') && !str.includes('+') && !str.includes('-', 10)) str += 'Z';
-  return new Date(str);
-};
-const fmtTimePH     = (d) => { if (!d) return null; try { return toPHTime(d).toLocaleString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true }); } catch { return null; } };
-const fmtDatePH     = (d) => { if (!d) return null; try { return toPHTime(d).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' }); } catch { return null; } };
-const fmtDateLongPH = (d) => { if (!d) return null; try { return toPHTime(d).toLocaleString('en-PH', { timeZone: 'Asia/Manila', weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }); } catch { return null; } };
+const SOCKET_URL =
+  import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:4000';
+
+const PHT = 'Asia/Manila';
 
 const PURPOSES = [
-  'Laboratory Activity', 'Class Demonstration / Instruction', 'Thesis / Capstone Project',
-  'Course Project / Assignment', 'Research / Development', 'Field Work / Surveying',
-  'Event / Competition', 'Other',
+  'Laboratory Activity',
+  'Class Demonstration',
+  'Thesis / Capstone',
+  'Course Project',
+  'Research',
+  'Other',
 ];
 
-const TYPE_CFG = [
-  { id: 'slot',  Icon: Clock,         label: 'Reserve Time Slot', sub: 'For a specific class time today or later.', ring: 'border-violet-400 bg-violet-50/80 shadow-md', icon: 'bg-violet-500 text-white', badge: 'bg-violet-100 text-violet-800' },
-  { id: 'range', Icon: CalendarRange, label: 'Multiple Days',     sub: 'For thesis, field work, or long projects.', ring: 'border-teal-400 bg-teal-50/80 shadow-md',   icon: 'bg-teal-500 text-white',   badge: 'bg-teal-100 text-teal-800'   },
+const DURATION_OPTIONS = [
+  { label: '10 min',  mins: 10  },
+  { label: '20 min',  mins: 20  },
+  { label: '1 hr',    mins: 60  },
+  { label: '1.5 hrs', mins: 90  },
+  { label: '3 hrs',   mins: 180 },
 ];
 
-const StepBadge   = ({ n }) => <span className="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-[11px] font-black flex-shrink-0 shadow-sm">{n}</span>;
-const SectionHead = ({ step, label, className = '' }) => (
-  <div className={`flex items-center gap-2 mb-4 ${className}`}>
-    {step && <StepBadge n={step} />}
-    <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">{label}</h3>
+/** Day window for the room: 7 AM – 8 PM PHT */
+const DAY_START_MINS = 7  * 60;  // 420
+const DAY_END_MINS   = 20 * 60;  // 1200
+const DAY_RANGE_MINS = DAY_END_MINS - DAY_START_MINS; // 780
+
+const BREAK_START_MINS = 11 * 60 + 30; // 690 (11:30 AM)
+const BREAK_END_MINS   = 13 * 60;      // 780 (1:00 PM)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pure helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const toISO = (dateStr, timeStr) => `${dateStr}T${timeStr}:00+08:00`;
+
+const dateToPHTTime = (d) => {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: PHT, hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date(d));
+    const h  = parts.find(p => p.type === 'hour')?.value   ?? '00';
+    const mn = parts.find(p => p.type === 'minute')?.value ?? '00';
+    return `${h === '24' ? '00' : h}:${mn}`;
+  } catch {
+    return null;
+  }
+};
+
+const dateToPHTDate = (d) =>
+  new Date(d).toLocaleDateString('en-CA', { timeZone: PHT });
+
+const timeToMins = (t) => {
+  if (!t) return 0;
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + (m || 0);
+};
+
+const minsToTime = (m) =>
+  `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+const addMins = (timeStr, mins) => minsToTime(timeToMins(timeStr) + mins);
+
+const fmtTime = (d) => {
+  if (!d) return '';
+  return new Date(d).toLocaleString('en-PH', {
+    timeZone: PHT, hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+};
+const fmtDateLong = (d) => {
+  if (!d) return '';
+  return new Date(d).toLocaleString('en-PH', {
+    timeZone: PHT, weekday: 'long', month: 'short', day: 'numeric', year: 'numeric',
+  });
+};
+const fmtDateShort = (dateStr) => {
+  if (!dateStr) return '';
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  return new Date(y, mo - 1, d).toLocaleDateString('en-PH', {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+  });
+};
+
+const cartKeyOf = (item) => {
+  if (item.inventory_mode === 'unit') return `unit:${item.item_id}`;
+  if (item.kind === 'consumable')     return `consumable:${item.consumable_id ?? item.id}`;
+  return `qty:${item.stock_id ?? item.id}`;
+};
+
+const maxQtyOf = (item) =>
+  item.inventory_mode === 'unit' ? 1 : (item._avail ?? 0);
+
+const isCalendarEventExpired = (ev) => {
+  const status = ev.status?.toUpperCase();
+  if (!['PENDING', 'APPROVED', 'PENDING APPROVAL'].includes(status)) return false;
+
+  const now = Date.now();
+  if (ev.pickup_datetime) {
+    return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
+  }
+  if (ev.pickup_start) {
+    const e = new Date(ev.pickup_start); 
+    e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  if (ev.created_at) {
+    const e = new Date(ev.created_at); 
+    e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  return false;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TimelineBar
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TimelineBar = memo(({ bookings = [], pickedWindow = null, compact = false }) => {
+  const clamp = (v) => Math.min(Math.max(v, DAY_START_MINS), DAY_END_MINS);
+  const pct   = (v) => ((clamp(v) - DAY_START_MINS) / DAY_RANGE_MINS) * 100;
+
+  return (
+    <div className={`relative ${compact ? 'h-2' : 'h-3'} rounded-full bg-gray-100 overflow-hidden`}>
+      
+      <div
+        className="absolute inset-y-0 bg-gray-300/70"
+        title="Lunch Break (11:30 AM - 1:00 PM)"
+        style={{
+          left: `${pct(BREAK_START_MINS)}%`,
+          width: `${pct(BREAK_END_MINS) - pct(BREAK_START_MINS)}%`,
+        }}
+      />
+
+      {bookings.map((b, i) => {
+        const left  = pct(b.startMins);
+        const width = Math.max(pct(b.endMins) - left, 1.5);
+        return (
+          <div
+            key={i}
+            className="absolute inset-y-0 bg-red-400/80 rounded-sm"
+            style={{ left: `${left}%`, width: `${width}%` }}
+          />
+        );
+      })}
+
+      {pickedWindow && (
+        <div
+          className="absolute inset-y-0 bg-teal-400/80 rounded-sm"
+          style={{
+            left:  `${pct(pickedWindow.startMins)}%`,
+            width: `${Math.max(pct(pickedWindow.endMins) - pct(pickedWindow.startMins), 1.5)}%`,
+          }}
+        />
+      )}
+
+      {!compact && [8, 10, 12, 14, 16, 18].map(hr => (
+        <div
+          key={hr}
+          className="absolute inset-y-0 w-px bg-white/50"
+          style={{ left: `${((hr * 60 - DAY_START_MINS) / DAY_RANGE_MINS) * 100}%` }}
+        />
+      ))}
+    </div>
+  );
+});
+TimelineBar.displayName = 'TimelineBar';
+
+const StepBadge = ({ step, complete, locked }) => (
+  <div
+    className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-black transition-all
+      ${complete ? 'bg-emerald-500 text-white'
+        : locked  ? 'bg-gray-200 text-gray-400'
+        : 'bg-primary/10 text-primary'}`}
+  >
+    {complete ? <Check size={12} /> : step}
   </div>
 );
 
-export default function NewRequest() {
-  const { user } = useAuth();
-  const initialRoom = useMemo(() =>
-    user?.room_id && user.room_id !== 'null' && user.room_id !== 'undefined' ? String(user.room_id) : '',
-  [user?.room_id]);
+// ─────────────────────────────────────────────────────────────────────────────
+// CartRow
+// ─────────────────────────────────────────────────────────────────────────────
 
-  const [viewMode, setViewMode] = useState('calendar');
-  const [availableRooms, setAvailableRooms]   = useState([]);
-  const [selectedRoomId, setSelectedRoomId]   = useState('');
-  const [inventory, setInventory]             = useState([]);
-  const [inventorySearch, setInventorySearch] = useState('');
-  const [refreshTrigger, setRefreshTrigger]   = useState(0);
-
-  const [resType, setResType]       = useState('slot');
-  const [pickupDate, setPickupDate] = useState('');
-  const [pickupTime, setPickupTime] = useState('');
-  const [returnTime, setReturnTime] = useState(''); // 🚨 ADDED: Expected Return Time
-  const [rangeStart, setRangeStart] = useState('');
-  const [rangeEnd, setRangeEnd]     = useState('');
-
-  const [cart, setCart]                   = useState([]);
-  const [purpose, setPurpose]             = useState('');
-  const [customPurpose, setCustomPurpose] = useState('');
-  const [email, setEmail]                 = useState(user?.email || '');
-  const [submitting, setSubmitting]       = useState(false);
-  const [successData, setSuccessData]     = useState(null);
-  const [confirmClose, setConfirmClose]   = useState(false);
-  const [calendarSelectedDate, setCalendarSelectedDate] = useState(null);
-
-  const todayISO        = useMemo(() => new Date().toISOString().split('T')[0], []);
-  const loadCooldownRef    = useRef(false);
-  const selectedRoomIdRef  = useRef(selectedRoomId);
-
-  useEffect(() => { if (initialRoom && !selectedRoomId) setSelectedRoomId(initialRoom); }, [initialRoom]);
-  useEffect(() => { selectedRoomIdRef.current = selectedRoomId; }, [selectedRoomId]);
-
-  useEffect(() => {
-    api.get('/rooms').catch(() => api.get('/admin/rooms'))
-      .then(res => setAvailableRooms(res.data?.data || res.data || []))
-      .catch(() => toast.error('Could not load rooms'));
-
-    const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
-    socket.on('room-updated', data =>
-      setAvailableRooms(prev => prev.map(r =>
-        String(r.id) === String(data.roomId) ? { ...r, is_available: data.is_available, unavailable_reason: data.reason } : r
-      ))
-    );
-    socket.on('inventory-updated', (payload) => {
-      const eventRoom = payload?.room_id || payload?.roomId;
-      if (eventRoom && String(eventRoom) !== String(selectedRoomIdRef.current)) return;
-      if (loadCooldownRef.current) return;
-      loadCooldownRef.current = true;
-      setRefreshTrigger(p => p + 1);
-      setTimeout(() => { loadCooldownRef.current = false; }, 5000);
-    });
-    return () => socket.disconnect();
-  }, []);
-
-  const currentRoom  = useMemo(() => availableRooms.find(r => String(r.id) === String(selectedRoomId)), [availableRooms, selectedRoomId]);
-  const isRoomClosed = !!(currentRoom && !currentRoom.is_available);
-
-  const fetchInv = useCallback(async () => {
-    if (!selectedRoomId || isRoomClosed) { setInventory([]); return; }
-    try {
-      const res  = await listInventory({ room_id: selectedRoomId });
-      const data = res.data?.data || {};
-
-      const unitsMap = (data.items || []).reduce((acc, i) => {
-        const tid = i.inventory_type_id;
-        if (!acc[tid]) {
-          acc[tid] = { ...i, kind: 'borrowable', inventory_mode: 'unit', _avail: 0, _total: 0 };
-        }
-        acc[tid]._total += 1;
-        if (i.status === 'available') acc[tid]._avail += 1;
-        return acc;
-      }, {});
-      const units = Object.values(unitsMap);
-
-      const consumables = (data.consumables || []).map(i => ({
-        ...i, kind: 'consumable', inventory_mode: 'unit',
-        _avail: i.quantity_available || 0,
-        _total: i.quantity_total || 0
-      }));
-
-      const qtyItems = (data.quantityItems || []).map(i => ({
-        ...i, kind: 'quantity', inventory_mode: 'quantity',
-        _avail: i.qty_available || 0,
-        _total: i.qty_total || 0
-      }));
-
-      const fresh = [...units, ...consumables, ...qtyItems].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-      setInventory(fresh);
-
-      setCart(prev => prev.map(c => {
-        const f = fresh.find(i => i.kind === c.kind && i.inventory_type_id === c.inventory_type_id && (i.stock_id || i.id) === (c.stock_id || c.id));
-        if (!f) return null;
-        if (c.req_qty > f._avail) return { ...c, req_qty: f._avail };
-        return c;
-      }).filter(c => c && c.req_qty > 0));
-
-    } catch { toast.error('Failed to load inventory'); }
-  }, [selectedRoomId, isRoomClosed]);
-
-  useEffect(() => { fetchInv(); }, [fetchInv, refreshTrigger]);
-
-  const filteredInventory = useMemo(() => {
-    const q = inventorySearch.trim().toLowerCase();
-    return q ? inventory.filter(i => i.name?.toLowerCase().includes(q)) : inventory;
-  }, [inventory, inventorySearch]);
-
-  const handleCalendarDateSelect = useCallback((dateStr) => {
-    if (!dateStr) { setCalendarSelectedDate(null); return; }
-    setCalendarSelectedDate(prev => prev === dateStr ? null : dateStr);
-  }, []);
-
-  const handleReserveOnDate = useCallback((dateStr) => {
-    if (!dateStr) return;
-    setPickupDate(dateStr);
-    setResType('slot');
-    setViewMode('reserve');
-    toast.success(`Date pre-filled: ${dateStr}`, { icon: '📅', duration: 2000 });
-  }, []);
-
-  const addToCart = item => {
-    if (isRoomClosed || item._avail <= 0) return;
-    const ex = cart.find(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id));
-    if (ex) {
-      if (ex.req_qty >= item._avail) return toast.error(`Stock limit reached: Only ${item._avail} available.`);
-      setCart(cart.map(c => c === ex ? { ...c, req_qty: c.req_qty + 1 } : c));
-      toast.success(`Increased ${item.name} quantity`);
-    } else {
-      setCart([...cart, { ...item, req_qty: 1 }]);
-      toast.success(`${item.name} added`);
-    }
-  };
-
-  const updateCartField = (val, item) => {
-    const qty = parseInt(val) || 0;
-    if (qty <= 0) { removeFromCart(item); return; }
-    if (qty > item._avail) toast.error(`Stock limit reached: Only ${item._avail} available right now!`, { id: `stock-warn` });
-    setCart(cart.map(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id) 
-      ? { ...c, req_qty: Math.min(qty, item._avail) } 
-      : c));
-  };
-
-  const removeFromCart = item => {
-    setCart(cart.filter(c => !(c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id))));
-  };
-
-  const pickupWindow = useMemo(() => {
-    if (resType !== 'slot' || !pickupDate || !pickupTime) return null;
-    const start = new Date(`${pickupDate}T${pickupTime}`);
-    const end   = new Date(start.getTime() + 15 * 60000);
-    return { start, end, display: `${fmtDateLongPH(start)} · ${fmtTimePH(start)} – ${fmtTimePH(end)}`, isPast: start <= new Date() };
-  }, [resType, pickupDate, pickupTime]);
-
-  const rangeSummary = useMemo(() => {
-    if (resType !== 'range') return null;
-    const fmt = s => fmtDatePH(new Date(s + 'T00:00:00')) || s;
-    if (rangeStart && rangeEnd) return `${fmt(rangeStart)} → ${fmt(rangeEnd)}`;
-    if (rangeStart) return `From ${fmt(rangeStart)} — please pick an end date`;
-    return null;
-  }, [resType, rangeStart, rangeEnd]);
-
-  const handleSubmit = async () => {
-    if (isRoomClosed)      return toast.error('This room is currently closed.');
-    if (!selectedRoomId)   return toast.error('Please select a room.');
-    if (cart.length === 0) return toast.error('You must add at least one item to your list.');
-    const finalPurpose = purpose === 'Other' ? customPurpose.trim() : purpose;
-    if (!finalPurpose)     return toast.error('Please tell us the purpose of this request.');
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!email || !emailRegex.test(email)) return toast.error('Please provide a valid email address.');
-    
-    // 🚨 ADDED: Return Time Validation
-    if (resType === 'slot') {
-      if (!pickupDate || !pickupTime || !returnTime) return toast.error('Please complete all Date, Pickup Time, and Expected Return Time fields.');
-      if (pickupWindow?.isPast) return toast.error('Your pickup time has already passed. Please choose a future time.');
-      if (returnTime <= pickupTime) return toast.error('Expected Return Time must be later than the Pickup Time.');
-    }
-    if (resType === 'range' && (!rangeStart || !rangeEnd)) return toast.error('Please select both a start and end date.');
-
-    setSubmitting(true);
-    try {
-      const payload = {
-        room_id: selectedRoomId, purpose: finalPurpose, email,
-        items: cart.map(c => {
-          if (c.inventory_mode === 'quantity') return { inventory_type_id: c.inventory_type_id, stock_id: c.stock_id || c.id, qty_requested: c.req_qty, quantity: c.req_qty };
-          if (c.kind === 'consumable') return { inventory_type_id: c.inventory_type_id, consumable_id: c.consumable_id || c.id || c.item_id, quantity: c.req_qty, qty_requested: c.req_qty };
-          return { inventory_type_id: c.inventory_type_id, quantity: c.req_qty, qty_requested: c.req_qty };
-        }),
-      };
-      
-      // 🚨 ADDED: Map expected return_deadline
-      if (resType === 'slot') {
-        payload.pickup_datetime = `${pickupDate}T${pickupTime}:00+08:00`;
-        payload.return_deadline = `${pickupDate}T${returnTime}:00+08:00`;
-      }
-      if (resType === 'range') { 
-        payload.pickup_start = `${rangeStart}T08:00:00+08:00`; 
-        payload.pickup_end = `${rangeEnd}T22:00:00+08:00`; 
-      }
-      
-      const res = await createRequest(payload);
-      setSuccessData(res.data.data || res.data);
-      toast.success('Successfully submitted!');
-    } catch (e) { toast.error(e.response?.data?.message || 'Failed to submit request.'); }
-    finally { setSubmitting(false); }
-  };
-
-  const resetAll = useCallback(() => {
-    setSuccessData(null); setConfirmClose(false); setCart([]); setPurpose(''); setCustomPurpose('');
-    setResType('slot'); setPickupDate(''); setPickupTime(''); setReturnTime(''); setRangeStart(''); setRangeEnd('');
-    setInventorySearch(''); setCalendarSelectedDate(null); setViewMode('calendar');
-    if (!initialRoom) setSelectedRoomId('');
-  }, [initialRoom]);
-
-  const parseMeta = (raw) => { try { return typeof raw === 'string' ? JSON.parse(raw) : (raw || {}); } catch { return {}; } };
-
-  const InvRow = ({ item }) => {
-    const badge  = item.inventory_mode === 'quantity' ? { cls: 'bg-violet-100 text-violet-700', label: 'Batch' } : item.kind === 'consumable' ? { cls: 'bg-amber-100 text-amber-700', label: 'Consumable' } : { cls: 'bg-blue-100 text-blue-700', label: 'Unit' };
-    const sub    = `${item._avail} avail / ${item._total} total`;
-    const inCart = cart.some(c => c.kind === item.kind && c.inventory_type_id === item.inventory_type_id && (c.stock_id || c.id) === (item.stock_id || item.id));
-    const disabled = item._avail <= 0;
-    const meta = parseMeta(item.type_metadata || item.metadata);
-
-    return (
-      <div className={`flex items-center justify-between p-3.5 border rounded-2xl transition-all group ${disabled ? 'opacity-50 grayscale bg-gray-50/50 cursor-not-allowed' : inCart ? 'bg-primary/5 border-primary/30 cursor-pointer' : 'bg-white/80 border-black/10 hover:border-primary/40 hover:shadow-md cursor-pointer'}`} onClick={() => !disabled && addToCart(item)}>
-        <div className="flex-1 min-w-0 mr-3">
-          <p className={`font-black text-sm line-clamp-2 transition-colors ${disabled ? 'text-gray-500' : 'text-gray-800 group-hover:text-primary'}`} title={item.name}>{item.name}</p>
-          {selectedRoomId === '3' && meta.authors && <p className="text-[10px] text-gray-500 line-clamp-1 mt-0.5 font-medium">{meta.authors} <span className="font-mono text-blue-500 font-bold ml-1">({meta.year})</span></p>}
-          <div className="flex items-center gap-2 mt-1.5">
-            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider ${badge.cls}`}>{badge.label}</span>
-            <span className={`text-[10px] font-bold ${item._avail > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{sub}</span>
-          </div>
-        </div>
-        <button disabled={disabled} className={`w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl transition-all ${inCart ? 'bg-primary text-white' : disabled ? 'bg-gray-200 text-gray-400' : 'bg-primary/10 text-primary group-hover:bg-primary group-hover:text-white'}`}>
-          {inCart ? <CheckCircle size={16} /> : <Plus size={18} />}
-        </button>
-      </div>
-    );
-  };
-
-  const CartRow = ({ item }) => {
-    const meta = parseMeta(item.type_metadata || item.metadata);
-    return (
-      <div className="flex items-center gap-3 p-3 bg-white/90 backdrop-blur-sm border border-black/10 rounded-2xl shadow-sm">
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-black text-gray-800 line-clamp-1" title={item.name}>{item.name}</p>
-          {selectedRoomId === '3' && meta.year && <p className="text-[9px] text-gray-500 mt-0.5 font-bold uppercase tracking-widest">Published: {meta.year}</p>}
-        </div>
-        <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded-xl border border-black/5">
-          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Qty</span>
-          <input type="number" min="1" max={item._avail} value={item.req_qty} onChange={e => updateCartField(parseInt(e.target.value), item)} className="w-10 bg-transparent text-center text-sm font-black text-primary outline-none" />
-        </div>
-        <button onClick={() => removeFromCart(item)} className="p-2 text-red-400 hover:bg-red-100 hover:text-red-600 rounded-xl transition-colors flex-shrink-0"><Trash2 size={16} /></button>
-      </div>
-    );
-  };
+const CartRow = memo(({ item, onAdjust, onRemove }) => {
+  const isUnit = item.inventory_mode === 'unit';
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] relative bg-slate-50 dark:bg-darkSurface z-0 overflow-hidden">
-      <div className="absolute inset-0 pointer-events-none -z-10">
-        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px]" />
-        <div className="absolute top-[40%] -right-[10%] w-[40%] h-[40%] rounded-full bg-blue-400/10 blur-[100px]" />
-        <div className="absolute -bottom-[10%] left-[20%] w-[40%] h-[40%] rounded-full bg-emerald-400/10 blur-[100px]" />
+    <div className="flex items-center justify-between gap-3 bg-slate-50 border border-black/6 rounded-xl px-4 py-3">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-black text-gray-800 truncate">{item.name}</p>
+        {item.barcode && (
+          <p className="text-[10px] font-mono text-gray-400 mt-0.5 truncate">{item.barcode}</p>
+        )}
+        {!isUnit && (
+          <p className="text-[10px] text-gray-400 mt-0.5 font-medium">
+            Qty: {item.req_qty} / {item._avail} available
+          </p>
+        )}
       </div>
 
-      <div className="bg-white/80 backdrop-blur-xl border-b border-white/50 px-4 md:px-8 py-3.5 flex flex-col sm:flex-row items-center justify-between shadow-sm z-10 gap-3 flex-shrink-0">
-        <div className="flex items-center gap-4 w-full sm:w-auto">
-          <div className="w-10 h-10 rounded-2xl bg-primary/10 items-center justify-center hidden sm:flex shrink-0 shadow-inner">
-            <CalendarRange size={20} className="text-primary" />
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {isUnit ? (
+          <button
+            onClick={() => onRemove(item)}
+            aria-label="Remove from cart"
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+          >
+            <Trash2 size={16} />
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={() => onAdjust(item, -1)}
+              aria-label="Decrease quantity"
+              className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors"
+            >
+              <Minus size={14} />
+            </button>
+            <span className="w-8 text-center text-sm font-black text-gray-800 tabular-nums">
+              {item.req_qty}
+            </span>
+            <button
+              onClick={() => onAdjust(item, +1)}
+              disabled={item.req_qty >= item._avail}
+              aria-label="Increase quantity"
+              className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center text-gray-600 hover:bg-teal-50 hover:text-teal-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Plus size={14} />
+            </button>
+            <button
+              onClick={() => onRemove(item)}
+              aria-label="Remove from cart"
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors ml-1"
+            >
+              <Trash2 size={16} />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+});
+CartRow.displayName = 'CartRow';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// InventoryUnitRow
+// ─────────────────────────────────────────────────────────────────────────────
+
+const InventoryUnitRow = memo(({
+  item, inCart, bookings, pickedWindow, bookedAtSlot, onAdd, onRemove,
+}) => {
+  const unavailable = item._avail <= 0;
+  const disabled    = unavailable || bookedAtSlot;
+
+  return (
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      onKeyDown={(e) => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) onAdd(item); }}
+      onClick={() => { if (!disabled) onAdd(item); }}
+      className={`flex items-center gap-3 px-3 py-3 rounded-xl border transition-all select-none
+        ${disabled
+          ? 'bg-gray-50 border-gray-100 opacity-55 cursor-not-allowed'
+          : inCart
+            ? 'bg-teal-50 border-teal-300 cursor-pointer'
+            : 'bg-white border-black/8 hover:border-teal-300 hover:shadow-sm cursor-pointer'}`}
+    >
+      <span className="text-[10px] font-mono font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded flex-shrink-0 tracking-wide">
+        {item.barcode || '—'}
+      </span>
+
+      <div className="flex-1 min-w-0">
+        {bookings.length > 0 ? (
+          <>
+            <TimelineBar bookings={bookings} pickedWindow={pickedWindow} compact />
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {bookings.map((b, i) => (
+                <span
+                  key={i}
+                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap
+                    ${bookedAtSlot ? 'text-red-700 bg-red-100' : 'text-amber-700 bg-amber-50'}`}
+                >
+                  {b.label}
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <span className="text-[11px] font-bold text-emerald-600">
+            {pickedWindow ? '✓ Free at your time' : 'Free all day'}
+          </span>
+        )}
+        {bookedAtSlot && (
+          <span className="text-[10px] font-black text-red-600 block mt-0.5">
+            Already booked at your selected time
+          </span>
+        )}
+      </div>
+
+      <div className="flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+        {inCart ? (
+          <button
+            onClick={() => onRemove(item)}
+            aria-label="Remove unit from cart"
+            className="w-9 h-9 rounded-xl bg-teal-500 text-white flex items-center justify-center hover:bg-red-500 transition-colors shadow-sm"
+          >
+            <Check size={16} />
+          </button>
+        ) : (
+          <button
+            disabled={disabled}
+            onClick={() => { if (!disabled) onAdd(item); }}
+            aria-label="Add unit to cart"
+            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors
+              ${disabled
+                ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                : 'bg-gray-100 text-gray-600 hover:bg-teal-500 hover:text-white shadow-sm'}`}
+          >
+            <Plus size={16} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+});
+InventoryUnitRow.displayName = 'InventoryUnitRow';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// InventoryGroupCard
+// ─────────────────────────────────────────────────────────────────────────────
+
+const InventoryGroupCard = memo(({
+  group,
+  cart,
+  pickedWindow,
+  step2Done,
+  isItemBookedAtSlot,
+  getBookingsForGroup,
+  getBookingsForItem,
+  selectedDate,
+  onAdd,
+  onRemove,
+  onAdjustQty,
+}) => {
+  const [expanded, setExpanded] = useState(false);
+
+  const isSingleUnit = group.items.length === 1 && group.inventory_mode === 'unit';
+  const isFungible   = group.inventory_mode !== 'unit'; 
+
+  const cartEntries = useMemo(
+    () => cart.filter(c => c.name === group.name),
+    [cart, group.name],
+  );
+  const cartTotalQty = cartEntries.reduce((s, c) => s + c.req_qty, 0);
+  const cartCount    = cartEntries.length; 
+
+  const bookings = getBookingsForGroup(group);
+
+  const freeAtSlot = useMemo(() => {
+    if (!step2Done) return null;
+    if (isFungible) {
+      if (!pickedWindow) return group.totalAvail;
+      let overlappingQty = 0;
+      const poolItem = group.items[0];
+      const poolBookings = getBookingsForItem(poolItem);
+      for (const b of poolBookings) {
+        if (pickedWindow.startMins < b.endMins && pickedWindow.endMins > b.startMins) {
+          overlappingQty += (b.qty || 1);
+        }
+      }
+      return Math.max(0, poolItem._avail - overlappingQty);
+    } else {
+      return group.items.filter(i => i._avail > 0 && !isItemBookedAtSlot(i)).length;
+    }
+  }, [step2Done, isFungible, group, isItemBookedAtSlot, getBookingsForItem, pickedWindow]);
+
+  const allOut         = group.totalAvail <= 0;
+  const allBookedNow   = step2Done && !isFungible && group.totalAvail > 0 && freeAtSlot === 0;
+  const fullyUnavail   = allOut || allBookedNow;
+
+  const poolItem = isFungible ? group.items[0] : null;
+  const poolInCart = poolItem ? cart.find(c => cartKeyOf(c) === cartKeyOf(poolItem)) : null;
+
+  const handleGroupClick = () => {
+    if (isFungible) return; 
+    if (fullyUnavail) return;
+    if (isSingleUnit) {
+      const item = group.items[0];
+      const alreadyIn = cart.some(c => cartKeyOf(c) === cartKeyOf(item));
+      if (alreadyIn) onRemove(item);
+      else onAdd(item);
+      return;
+    }
+    setExpanded(prev => !prev);
+  };
+
+  const inCartForItem = useCallback(
+    (item) => cart.some(c => cartKeyOf(c) === cartKeyOf(item)),
+    [cart],
+  );
+
+  return (
+    <div
+      className={`rounded-2xl border-2 overflow-hidden transition-all
+        ${fullyUnavail
+          ? 'border-gray-100 opacity-55'
+          : cartCount > 0 || cartTotalQty > 0
+            ? 'border-teal-300 shadow-sm shadow-teal-50'
+            : 'border-black/6 shadow-sm'}`}
+    >
+      <div
+        role={isFungible ? 'region' : 'button'}
+        tabIndex={isFungible || fullyUnavail ? -1 : 0}
+        onKeyDown={(e) => {
+          if (!isFungible && !fullyUnavail && (e.key === 'Enter' || e.key === ' '))
+            handleGroupClick();
+        }}
+        onClick={handleGroupClick}
+        className={`flex flex-wrap sm:flex-nowrap items-center gap-3 p-3.5 transition-colors
+          ${fullyUnavail
+            ? 'bg-gray-50 cursor-default'
+            : cartCount > 0 || cartTotalQty > 0
+              ? 'bg-teal-50/60 cursor-pointer'
+              : isFungible
+                ? 'bg-white cursor-default'
+                : 'bg-white hover:bg-slate-50 cursor-pointer'}`}
+      >
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <div
+            className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0
+              ${fullyUnavail
+                ? 'bg-gray-200'
+                : cartCount > 0 || cartTotalQty > 0
+                  ? 'bg-teal-100'
+                  : 'bg-slate-100'}`}
+          >
+            <Layers
+              size={18}
+              className={
+                fullyUnavail
+                  ? 'text-gray-400'
+                  : cartCount > 0 || cartTotalQty > 0
+                    ? 'text-teal-600'
+                    : 'text-gray-500'
+              }
+            />
           </div>
-          <div className="flex-1 min-w-0">
-            <h2 className="text-base md:text-lg font-black text-gray-800 tracking-tight">Equipment Reservation</h2>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <MapPin size={12} className="text-primary flex-shrink-0" />
-              <select className="bg-transparent text-xs font-bold text-gray-600 outline-none cursor-pointer w-full text-ellipsis" value={selectedRoomId} onChange={e => { setSelectedRoomId(e.target.value); setCart([]); }} disabled={!!initialRoom}>
-                <option value="" disabled>— Select Room First —</option>
-                {availableRooms.map(r => <option key={r.id} value={r.id}>{r.is_available ? '🟢' : '🔴'} {r.name || r.code}</option>)}
-              </select>
+
+          <div className="flex-1 min-w-0 pr-2">
+            <p className={`font-black text-sm truncate ${fullyUnavail ? 'text-gray-500' : 'text-gray-900'}`}>
+              {group.name}
+            </p>
+
+            {selectedDate && bookings.length > 0 && (
+              <div className="mt-1 mb-1">
+                <TimelineBar bookings={bookings} pickedWindow={pickedWindow} compact />
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+              {group.kind === 'consumable' && (
+                <span className="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">
+                  Consumable
+                </span>
+              )}
+
+              {allBookedNow ? (
+                <span className="text-[9px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded flex items-center gap-1">
+                  <Clock size={10} /> All booked at your time
+                </span>
+              ) : allOut ? (
+                <span className="text-[9px] font-black text-red-500 bg-red-50 px-2 py-0.5 rounded flex items-center gap-1">
+                  <PackageX size={10} /> All checked out
+                </span>
+              ) : step2Done && freeAtSlot !== null ? (
+                <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
+                  {freeAtSlot}/{group.totalUnits} free at your time
+                </span>
+              ) : (
+                <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
+                  {group.totalAvail} / {group.totalUnits} available
+                </span>
+              )}
+
+              {group.items.length > 1 && !isFungible && (
+                <span className="text-[9px] text-gray-400 font-medium">{group.items.length} units</span>
+              )}
+
+              {(cartCount > 0 || cartTotalQty > 0) && (
+                <span className="text-[9px] font-black text-teal-700 bg-teal-100 px-2 py-0.5 rounded">
+                  {isFungible ? `${cartTotalQty} in cart` : `${cartCount} in cart`}
+                </span>
+              )}
+
+              {!step2Done && bookings.length > 0 && (
+                <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded flex items-center gap-1">
+                  <Clock size={10} /> {bookings.length} booking{bookings.length > 1 ? 's' : ''}
+                </span>
+              )}
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-shrink-0 w-full sm:w-auto justify-end">
-          {viewMode === 'calendar' && cart.length > 0 && (
-            <button onClick={() => setViewMode('reserve')} className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-xs font-black shadow-md shadow-primary/20 hover:-translate-y-0.5 transition-transform">
-              <ShoppingBag size={14} /> {cart.length} item{cart.length !== 1 ? 's' : ''} ready <ArrowRight size={12} />
-            </button>
+        <div className="flex-shrink-0 ml-auto flex items-center">
+          {isFungible ? (
+            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              {poolInCart ? (
+                <>
+                  <button
+                    onClick={() => onAdjustQty(poolItem, -1)}
+                    aria-label="Decrease quantity"
+                    className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors"
+                  >
+                    <Minus size={16} />
+                  </button>
+                  <span className="w-7 text-center font-black text-sm text-teal-700 tabular-nums">
+                    {poolInCart.req_qty}
+                  </span>
+                  <button
+                    onClick={() => onAdjustQty(poolItem, +1)}
+                    disabled={poolInCart.req_qty >= freeAtSlot}
+                    aria-label="Increase quantity"
+                    className="w-9 h-9 rounded-xl bg-teal-100 flex items-center justify-center text-teal-700 hover:bg-teal-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </>
+              ) : (
+                <button
+                  disabled={fullyUnavail || freeAtSlot === 0}
+                  onClick={() => !fullyUnavail && freeAtSlot > 0 && onAdd(poolItem)}
+                  aria-label="Add to cart"
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors shadow-sm
+                    ${fullyUnavail || freeAtSlot === 0
+                      ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                      : 'bg-gray-100 text-gray-600 hover:bg-teal-500 hover:text-white'}`}
+                >
+                  <Plus size={18} />
+                </button>
+              )}
+            </div>
+          ) : isSingleUnit ? (
+            <div onClick={(e) => e.stopPropagation()}>
+              <button
+                disabled={fullyUnavail}
+                onClick={() => {
+                  if (fullyUnavail) return;
+                  const item = group.items[0];
+                  inCartForItem(item) ? onRemove(item) : onAdd(item);
+                }}
+                aria-label={inCartForItem(group.items[0]) ? 'Remove from cart' : 'Add to cart'}
+                className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors shadow-sm
+                  ${inCartForItem(group.items[0])
+                    ? 'bg-teal-500 text-white shadow-md'
+                    : fullyUnavail
+                      ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                      : 'bg-gray-100 text-gray-600 hover:bg-teal-500 hover:text-white'}`}
+              >
+                {inCartForItem(group.items[0]) ? <Check size={18} /> : <Plus size={18} />}
+              </button>
+            </div>
+          ) : (
+            <div className="text-gray-400 p-2">
+              {expanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+            </div>
           )}
-          <div className="flex bg-white/50 p-1 rounded-xl border border-black/5 shadow-sm">
-            <button onClick={() => setViewMode('calendar')} className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black transition-all ${viewMode === 'calendar' ? 'bg-white text-primary shadow-sm border border-black/5' : 'text-gray-500 hover:text-gray-700'}`}><CalendarDays size={14} /> Schedule</button>
-            <button onClick={() => setViewMode('reserve')} disabled={!selectedRoomId} className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black transition-all disabled:opacity-40 ${viewMode === 'reserve' ? 'bg-white text-primary shadow-sm border border-black/5' : 'text-gray-500 hover:text-gray-700'}`}><ShoppingBag size={14} /> Reserve Items</button>
-          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto relative z-10 custom-scrollbar">
-        {viewMode === 'calendar' && (
-          <div className="flex flex-col h-full">
-            {!selectedRoomId ? (
-              <div className="flex flex-col items-center justify-center h-full py-20 px-4 text-center animate-in fade-in zoom-in-95 duration-500">
-                <div className="w-24 h-24 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center mb-6 shadow-sm border border-white/50"><MapPin size={40} className="text-gray-400" /></div>
-                <h3 className="text-2xl font-black text-gray-800 tracking-tight">Where are you borrowing from?</h3>
-                <p className="text-sm font-medium text-gray-500 mt-2 max-w-sm">Select a room from the top bar to view its equipment schedule.</p>
+      {/* ── Expanded unit list ── */}
+      {expanded && !isSingleUnit && !isFungible && (
+        <div className="border-t border-black/5 bg-slate-50/60 p-3 space-y-2">
+          <div className="flex flex-wrap gap-y-2 items-center justify-between mb-1">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+              Select a physical unit:
+            </p>
+            <div className="flex flex-wrap items-center gap-3 text-[10px] text-gray-400">
+              <span className="flex items-center gap-1">
+                <span className="w-2.5 h-2 rounded-sm bg-red-400/75 inline-block" />Booked
+              </span>
+              {pickedWindow && (
+                <span className="flex items-center gap-1">
+                  <span className="w-2.5 h-2 rounded-sm bg-teal-400/80 inline-block" />Your slot
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {group.items.map((item) => {
+              const itemBookings   = getBookingsForItem(item);
+              const bookedAtSlot   = step2Done && isItemBookedAtSlot(item);
+              const alreadyInCart  = inCartForItem(item);
+
+              return (
+                <InventoryUnitRow
+                  key={item.item_id}
+                  item={item}
+                  inCart={alreadyInCart}
+                  bookings={itemBookings}
+                  pickedWindow={pickedWindow}
+                  bookedAtSlot={bookedAtSlot}
+                  onAdd={onAdd}
+                  onRemove={onRemove}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+InventoryGroupCard.displayName = 'InventoryGroupCard';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main component
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function NewRequest() {
+  const { user } = useAuth();
+
+  const initialRoom = useMemo(
+    () => (user?.room_id && user.room_id !== 'null' ? String(user.room_id) : ''),
+    [], 
+  );
+
+  const submitRef = useRef(null);
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [rooms, setRooms]               = useState([]);
+  const [selectedRoomId, setSelectedRoomId] = useState('');
+
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [calendarOpen, setCalendarOpen] = useState(true);
+
+  const [pickupTime, setPickupTime]     = useState('');
+  const [duration, setDuration]         = useState(null);
+
+  const [inventory, setInventory]       = useState([]);
+  const [loadingInv, setLoadingInv]     = useState(false);
+  const [inventorySearch, setInventorySearch] = useState('');
+
+  const [cart, setCart] = useState([]);
+  const [calendarEvents, setCalendarEvents] = useState([]);
+
+  const [purpose, setPurpose]           = useState('');
+  const [customPurpose, setCustomPurpose] = useState('');
+  const [email, setEmail]               = useState(user?.email || '');
+
+  const [submitting, setSubmitting]     = useState(false);
+  const [successData, setSuccessData]   = useState(null);
+  const [confirmClose, setConfirmClose] = useState(false);
+
+  const selectedRoomIdRef = useRef(selectedRoomId);
+  useEffect(() => { selectedRoomIdRef.current = selectedRoomId; }, [selectedRoomId]);
+
+  useEffect(() => {
+    if (initialRoom) setSelectedRoomId(initialRoom);
+  }, [initialRoom]);
+
+  useEffect(() => {
+    (api.get('/rooms').catch(() => api.get('/admin/rooms')))
+      .then(res => setRooms(res.data?.data || res.data || []))
+      .catch(() => toast.error('Could not load rooms.'));
+  }, []);
+
+  // ── Data fetching ──────────────────────────────────────────────────────────
+  const fetchCalendarEvents = useCallback(async () => {
+    const roomId = selectedRoomIdRef.current;
+    if (!roomId) return;
+    try {
+      const res = await api.get('/requests/calendar', { params: { room_id: roomId } });
+      setCalendarEvents(res.data?.data || []);
+    } catch { /* silent */ }
+  }, []);
+
+  const fetchInventory = useCallback(async () => {
+    const roomId = selectedRoomIdRef.current;
+    if (!roomId) {
+      setInventory([]);
+      return;
+    }
+    setLoadingInv(true);
+    try {
+      const res  = await listInventory({ room_id: roomId });
+      const data = res.data?.data ?? {};
+
+      const units = (data.items || []).map(i => ({
+        ...i,
+        kind: 'borrowable',
+        inventory_mode: 'unit',
+        _avail: ['available', 'reserved', 'borrowed'].includes(i.status) ? 1 : 0,
+        _total: 1,
+      }));
+
+      const consumables = (data.consumables || []).map(i => ({
+        ...i,
+        kind: 'consumable',
+        inventory_mode: 'consumable',
+        _avail: i.quantity_available ?? 0,
+        _total: i.quantity_total ?? 0,
+      }));
+
+      const qtyItems = (data.quantityItems || []).map(i => ({
+        ...i,
+        kind: 'quantity',
+        inventory_mode: 'quantity',
+        _avail: i.qty_available ?? 0,
+        _total: i.qty_total ?? 0,
+      }));
+
+      setInventory(
+        [...units, ...consumables, ...qtyItems].sort((a, b) =>
+          (a.name || '').localeCompare(b.name || ''),
+        ),
+      );
+    } catch {
+      toast.error('Failed to load inventory.');
+    } finally {
+      setLoadingInv(false);
+    }
+  }, []);
+
+  // ⚡ FIX: Stale Closure Elimination. Keep a fresh ref of our fetchers.
+  const fetchRefs = useRef({ fetchInventory, fetchCalendarEvents });
+  useEffect(() => {
+    fetchRefs.current = { fetchInventory, fetchCalendarEvents };
+  }, [fetchInventory, fetchCalendarEvents]);
+
+  // ⚡ FIX: Use the ref to call the fresh fetchers inside the socket listener
+  useEffect(() => {
+    const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
+    
+    socket.on('inventory-updated', (payload) => {
+      const eRoom = payload?.room_id ?? payload?.roomId;
+      if (!eRoom || String(eRoom) === String(selectedRoomIdRef.current)) {
+        fetchRefs.current.fetchInventory();
+        fetchRefs.current.fetchCalendarEvents();
+      }
+    });
+    
+    socket.on('request-updated', (payload) => {
+      const eRoom = payload?.room_id ?? payload?.roomId;
+      if (!eRoom || String(eRoom) === String(selectedRoomIdRef.current)) {
+        fetchRefs.current.fetchInventory();
+        fetchRefs.current.fetchCalendarEvents();
+      }
+    });
+    
+    return () => { 
+      setTimeout(() => socket.disconnect(), 100); 
+    };
+  }, []); 
+
+  // Re-fetch when date changes (date changes affect per-day availability)
+  useEffect(() => {
+    fetchInventory();
+    fetchCalendarEvents();
+  }, [fetchInventory, fetchCalendarEvents, selectedDate]);
+
+  const currentRoom  = useMemo(
+    () => rooms.find(r => String(r.id) === String(selectedRoomId)) ?? null,
+    [rooms, selectedRoomId],
+  );
+  const isRoomClosed = !!(currentRoom && !currentRoom.is_available);
+
+  // ── Inventory grouping ─────────────────────────────────────────────────────
+  const filteredInventory = useMemo(() => {
+    const q = inventorySearch.trim().toLowerCase();
+    const list = q
+      ? inventory.filter(
+          i =>
+            (i.name || '').toLowerCase().includes(q) ||
+            (i.barcode || '').toLowerCase().includes(q),
+        )
+      : [...inventory];
+    return list;
+  }, [inventory, inventorySearch]);
+
+  const groupedInventory = useMemo(() => {
+    const map = new Map();
+
+    filteredInventory.forEach(item => {
+      const key = item.name || 'Unknown';
+      if (!map.has(key)) {
+        map.set(key, {
+          name: key,
+          kind: item.kind,
+          inventory_mode: item.inventory_mode,
+          items: [],
+          totalAvail: 0,
+          totalUnits: 0,
+        });
+      }
+      const g = map.get(key);
+      g.items.push(item);
+      g.totalAvail += item._avail;
+      g.totalUnits += item._total;
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      if ((a.totalAvail > 0) !== (b.totalAvail > 0))
+        return b.totalAvail > 0 ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [filteredInventory]);
+
+  // ── Booking windows helpers ────────────────────────────────────────────────
+  const getBookingsForItem = useCallback(
+    (item) => {
+      if (!selectedDate || !calendarEvents.length) return [];
+
+      const results = [];
+      const targetDateStart = new Date(selectedDate);
+      targetDateStart.setHours(0, 0, 0, 0);
+      const targetDateEnd = new Date(targetDateStart);
+      targetDateEnd.setDate(targetDateEnd.getDate() + 1);
+
+      for (const ev of calendarEvents) {
+        if (isCalendarEventExpired(ev)) continue;
+        if (!['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(ev.status?.toUpperCase())) continue;
+
+        const evStart = new Date(
+          ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
+        );
+
+        const rawEnd = ev.return_deadline ?? ev.pickup_end;
+        const evEnd  = rawEnd
+          ? new Date(rawEnd)
+          : new Date(evStart.getTime() + 60 * 60_000);
+
+        if (evEnd <= targetDateStart || evStart >= targetDateEnd) continue;
+
+        let qtyInEv = 0;
+        const matches = (ev.items ?? []).some(evItem => {
+          if (item.inventory_mode === 'unit') {
+            if ((evItem.inventory_item_id && String(evItem.inventory_item_id) === String(item.item_id)) ||
+                (!evItem.inventory_item_id && String(evItem.inventory_type_id) === String(item.inventory_type_id))) {
+              qtyInEv = 1; return true;
+            }
+          } else if (item.kind === 'consumable') {
+            if (String(evItem.consumable_id) === String(item.consumable_id || item.id)) {
+              qtyInEv = evItem.quantity || evItem.qty_requested || 1; return true;
+            }
+          } else {
+            if (String(evItem.stock_id) === String(item.stock_id || item.id)) {
+              qtyInEv = evItem.quantity || evItem.qty_requested || 1; return true;
+            }
+          }
+          return false;
+        });
+
+        if (!matches) continue;
+
+        const st = dateToPHTTime(evStart);
+        const en = dateToPHTTime(evEnd);
+        if (st && en) {
+          results.push({
+            startMins: timeToMins(st),
+            endMins:   timeToMins(en),
+            label:     `${fmtTime(evStart)} – ${fmtTime(evEnd)}`,
+            qty:       qtyInEv
+          });
+        }
+      }
+      return results;
+    },
+    [selectedDate, calendarEvents],
+  );
+
+  const getBookingsForGroup = useCallback(
+    (group) => {
+      const seen = new Set();
+      const results = [];
+      for (const item of group.items) {
+        for (const b of getBookingsForItem(item)) {
+          const k = `${b.startMins}-${b.endMins}`;
+          if (!seen.has(k)) { seen.add(k); results.push(b); }
+        }
+      }
+      return results;
+    },
+    [getBookingsForItem],
+  );
+
+  const allDayBookings = useMemo(() => {
+    if (!selectedDate || !calendarEvents.length) return [];
+    const seen    = new Set();
+    const results = [];
+    for (const ev of calendarEvents) {
+      if (isCalendarEventExpired(ev)) continue;
+
+      const evStart = new Date(
+        ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
+      );
+      if (dateToPHTDate(evStart) !== selectedDate) continue;
+
+      const rawEnd = ev.return_deadline ?? ev.pickup_end;
+      const evEnd  = rawEnd
+        ? new Date(rawEnd)
+        : new Date(evStart.getTime() + 60 * 60_000);
+
+      const st = dateToPHTTime(evStart);
+      const en = dateToPHTTime(evEnd);
+      if (!st || !en) continue;
+      const k = `${st}-${en}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        results.push({ startMins: timeToMins(st), endMins: timeToMins(en) });
+      }
+    }
+    return results;
+  }, [selectedDate, calendarEvents]);
+
+  // ── Availability checks ────────────────────────────────────────────────────
+  const isSlotAvailable = useCallback(
+    (startTimeStr, durationMins) => {
+      if (!startTimeStr || !durationMins || !selectedDate) return false;
+
+      const slotStart = new Date(toISO(selectedDate, startTimeStr));
+      const slotEnd   = new Date(slotStart.getTime() + durationMins * 60_000);
+      const closing   = new Date(toISO(selectedDate, '20:00'));
+
+      if (slotEnd > closing) return false;
+
+      const nowPHT = new Date(new Date().toLocaleString('en-US', { timeZone: PHT }));
+      if (slotStart < nowPHT) return false;
+
+      const startMins = timeToMins(startTimeStr);
+      const endMins = startMins + durationMins;
+      if (startMins < BREAK_END_MINS && endMins > BREAK_START_MINS) return false;
+
+      if (cart.length > 0) {
+        for (const ev of calendarEvents) {
+          if (isCalendarEventExpired(ev)) continue;
+          if (!['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(ev.status?.toUpperCase())) continue;
+
+          const evStart = new Date(
+            ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
+          );
+
+          const rawEnd = ev.return_deadline ?? ev.pickup_end;
+          const evEnd  = rawEnd
+            ? new Date(rawEnd)
+            : new Date(evStart.getTime() + 60 * 60_000);
+
+          if (!(slotStart < evEnd && slotEnd > evStart)) continue;
+
+          for (const cartItem of cart) {
+            for (const evItem of ev.items ?? []) {
+              if (cartItem.inventory_mode === 'unit') {
+                if (
+                  (evItem.inventory_item_id &&
+                    String(evItem.inventory_item_id) === String(cartItem.item_id)) ||
+                  (!evItem.inventory_item_id &&
+                    String(evItem.inventory_type_id) === String(cartItem.inventory_type_id))
+                ) return false;
+              }
+            }
+          }
+        }
+      }
+
+      return true;
+    },
+    [selectedDate, cart, calendarEvents],
+  );
+
+  const isItemBookedAtSlot = useCallback(
+    (item) => {
+      if (!selectedDate || !pickupTime || !duration) return false;
+      const slotStart = new Date(toISO(selectedDate, pickupTime));
+      const slotEnd   = new Date(slotStart.getTime() + duration * 60_000);
+
+      for (const b of getBookingsForItem(item)) {
+        const bStart = new Date(toISO(selectedDate, minsToTime(b.startMins)));
+        const bEnd   = new Date(toISO(selectedDate, minsToTime(b.endMins)));
+        if (slotStart < bEnd && slotEnd > bStart) return true;
+      }
+      return false;
+    },
+    [selectedDate, pickupTime, duration, getBookingsForItem],
+  );
+
+  const currentSlotOk = useMemo(
+    () => isSlotAvailable(pickupTime, duration),
+    [isSlotAvailable, pickupTime, duration],
+  );
+
+  const pickedWindow = useMemo(
+    () =>
+      pickupTime && duration
+        ? { startMins: timeToMins(pickupTime), endMins: timeToMins(pickupTime) + duration }
+        : null,
+    [pickupTime, duration],
+  );
+
+  const step1Done = !!selectedDate;
+  const step2Done = !!(selectedDate && pickupTime && duration && currentSlotOk);
+  const step3Done = step2Done && cart.length > 0;
+  const canSubmit  = step3Done && purpose && (purpose !== 'Other' || customPurpose.trim()) && email;
+
+  // ── Cart actions ───────────────────────────────────────────────────────────
+  const addToCart = useCallback(
+    (item) => {
+      if (isRoomClosed || item._avail <= 0) return;
+
+      if (pickupTime && duration && isItemBookedAtSlot(item)) {
+        toast.error(
+          `${item.name}${item.barcode ? ` (${item.barcode})` : ''} is already booked at ${pickupTime}.`,
+        );
+        return;
+      }
+
+      const key = cartKeyOf(item);
+      setCart(prev => {
+        const existing = prev.find(c => cartKeyOf(c) === key);
+        if (existing) {
+          if (item.inventory_mode === 'unit') return prev;
+          
+          let maxForSlot = item._avail;
+          if (pickedWindow) {
+            let overlappingQty = 0;
+            const bookings = getBookingsForItem(item);
+            for (const b of bookings) {
+              if (pickedWindow.startMins < b.endMins && pickedWindow.endMins > b.startMins) {
+                overlappingQty += (b.qty || 1);
+              }
+            }
+            maxForSlot = Math.max(0, item._avail - overlappingQty);
+          }
+
+          if (existing.req_qty >= maxForSlot) {
+            setTimeout(() => toast.error(`Only ${maxForSlot} available during this time slot.`), 0);
+            return prev;
+          }
+          return prev.map(c => cartKeyOf(c) === key ? { ...c, req_qty: c.req_qty + 1 } : c);
+        }
+        return [...prev, { ...item, req_qty: 1 }];
+      });
+    },
+    [isRoomClosed, pickupTime, duration, isItemBookedAtSlot, getBookingsForItem, pickedWindow],
+  );
+
+  const removeFromCart = useCallback((item) => {
+    setCart(prev => prev.filter(c => cartKeyOf(c) !== cartKeyOf(item)));
+  }, []);
+
+  const adjustCartQty = useCallback((item, delta) => {
+    if (item.inventory_mode === 'unit') return;
+
+    const key = cartKeyOf(item);
+    setCart(prev => {
+      const existing = prev.find(c => cartKeyOf(c) === key);
+      if (!existing) return prev;
+      const next = existing.req_qty + delta;
+      if (next <= 0) return prev.filter(c => cartKeyOf(c) !== key);
+
+      let maxForSlot = item._avail;
+      if (pickedWindow) {
+        let overlappingQty = 0;
+        const bookings = getBookingsForItem(item);
+        for (const b of bookings) {
+          if (pickedWindow.startMins < b.endMins && pickedWindow.endMins > b.startMins) {
+            overlappingQty += (b.qty || 1);
+          }
+        }
+        maxForSlot = Math.max(0, item._avail - overlappingQty);
+      }
+
+      if (next > maxForSlot) {
+        setTimeout(() => toast.error(`Only ${maxForSlot} available during this time slot.`), 0);
+        return prev;
+      }
+      return prev.map(c => cartKeyOf(c) === key ? { ...c, req_qty: next } : c);
+    });
+  }, [pickedWindow, getBookingsForItem]);
+
+  const handleDateSelect = useCallback((dateStr) => {
+    setSelectedDate(prev => prev === dateStr ? null : dateStr);
+    setPickupTime('');
+    setDuration(null);
+    setCart([]);
+    setInventorySearch('');
+  }, []);
+
+  const handleRoomChange = useCallback(() => {
+    setSelectedRoomId('');
+    setSelectedDate(null);
+    setPickupTime('');
+    setDuration(null);
+    setCart([]);
+    setCalendarOpen(true);
+    setInventory([]);
+    setCalendarEvents([]);
+    setInventorySearch('');
+  }, []);
+
+  const handleSubmit = useCallback(async () => {
+    if (!canSubmit) return;
+
+    const finalPurpose = purpose === 'Other' ? customPurpose.trim() : purpose;
+    const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRx.test(email.trim())) {
+      toast.error('Please enter a valid email address.');
+      return;
+    }
+    if (!currentSlotOk) {
+      toast.error('Time conflict — please choose a different slot or remove conflicting items.');
+      return;
+    }
+
+    const returnTime = addMins(pickupTime, duration);
+    setSubmitting(true);
+
+    try {
+      const payload = {
+        room_id: selectedRoomId,
+        purpose: finalPurpose,
+        email: email.trim(),
+        pickup_datetime:  toISO(selectedDate, pickupTime),
+        return_deadline:  toISO(selectedDate, returnTime),
+        items: cart.map(c => ({
+          inventory_type_id: c.inventory_type_id,
+          quantity:          c.req_qty,
+          qty_requested:     c.req_qty,
+          ...(c.inventory_mode === 'unit'       && { inventory_item_id: c.item_id }),
+          ...(c.inventory_mode === 'quantity'   && { stock_id: c.stock_id ?? c.id }),
+          ...(c.kind === 'consumable'            && { consumable_id: c.consumable_id ?? c.id }),
+        })),
+      };
+
+      const res = await createRequest(payload);
+      setSuccessData(res.data.data ?? res.data);
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Failed to submit request. Please try again.');
+      fetchInventory();
+      fetchCalendarEvents();
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    canSubmit, purpose, customPurpose, email, currentSlotOk,
+    pickupTime, duration, selectedDate, selectedRoomId, cart,
+    fetchInventory, fetchCalendarEvents,
+  ]);
+
+  const cartTotalItems = cart.reduce((s, c) => s + c.req_qty, 0);
+
+  const returnTimeDisplay = step2Done ? addMins(pickupTime, duration) : null;
+
+  return (
+    <div className="flex flex-col h-[calc(100dvh-4rem)] bg-white overflow-hidden relative">
+
+      {!selectedRoomId ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-6 bg-gradient-to-br from-white to-slate-100">
+          <div className="w-20 h-20 bg-primary/10 text-primary rounded-full flex items-center justify-center mb-6 shadow-inner">
+            <MapPin size={40} />
+          </div>
+          <h1 className="text-3xl font-black text-gray-900 mb-2">Select a Laboratory</h1>
+          <p className="text-gray-500 font-medium mb-8">Choose your room to begin booking.</p>
+          <select
+            className="w-full max-w-sm bg-white border-2 border-primary/20 hover:border-primary shadow-lg rounded-2xl px-6 py-4 text-lg font-black text-gray-800 outline-none cursor-pointer transition-all"
+            value={selectedRoomId}
+            onChange={e => setSelectedRoomId(e.target.value)}
+          >
+            <option value="" disabled>Tap to choose a room…</option>
+            {rooms.map(r => (
+              <option key={r.id} value={r.id}>{r.name || r.code}</option>
+            ))}
+          </select>
+        </div>
+
+      ) : isRoomClosed ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+          <DoorClosed size={64} className="text-red-300 mb-4" />
+          <h2 className="text-2xl font-black text-red-600">Laboratory Closed</h2>
+          <p className="text-gray-500 mt-2 max-w-xs">
+            {currentRoom?.unavailable_reason || 'This room is currently unavailable for bookings.'}
+          </p>
+          {!initialRoom && (
+            <button
+              onClick={handleRoomChange}
+              className="mt-6 flex items-center gap-2 text-primary font-bold text-sm hover:underline"
+            >
+              <ArrowLeft size={16} /> Choose a different room
+            </button>
+          )}
+        </div>
+
+      ) : (
+        <>
+          <div className="flex-shrink-0 bg-gray-900 text-white px-4 py-3 flex items-center justify-between z-20 shadow-md">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <MapPin size={15} className="text-primary flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[10px] text-gray-400 font-medium leading-none mb-0.5">Booking for</p>
+                <p className="text-sm font-black leading-none truncate">
+                  {currentRoom?.name || currentRoom?.code}
+                </p>
               </div>
-            ) : isRoomClosed ? (
-              <div className="max-w-3xl mx-auto p-4 md:p-8 pt-12 animate-in fade-in zoom-in-95 duration-500">
-                <div className="p-6 md:p-8 flex flex-col sm:flex-row items-center gap-6 bg-red-50/90 backdrop-blur-md border-2 border-red-200 rounded-3xl shadow-sm">
-                  <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-inner"><DoorClosed size={32} className="text-red-500" /></div>
-                  <div className="text-center sm:text-left">
-                    <p className="font-black text-red-800 text-xl tracking-tight">This room is currently closed</p>
-                    <p className="text-sm text-red-600 mt-1 font-medium">"{currentRoom.unavailable_reason || 'No reason provided.'}"</p>
+            </div>
+            {!initialRoom && (
+              <button
+                onClick={handleRoomChange}
+                className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-gray-300 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex-shrink-0 ml-3"
+              >
+                <X size={12} /> Change
+              </button>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-y-auto" id="request-canvas">
+
+            {calendarOpen ? (
+              <div className="border-b border-black/5">
+                <div className="px-4 py-3 flex items-center gap-2.5">
+                  <StepBadge step="1" complete={step1Done} locked={false} />
+                  <CalendarDays size={13} className={step1Done ? 'text-emerald-600' : 'text-gray-500'} />
+                  <span className={`text-xs font-black uppercase tracking-wider ${step1Done ? 'text-emerald-700' : 'text-gray-700'}`}>
+                    Pick a date
+                  </span>
+                </div>
+                <div className="px-4 pb-4">
+                  <div className="h-[85vh] min-h-[650px] md:h-[550px] lg:h-[600px] border border-black/10 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col relative">
+                    <AvailabilityCalendar
+                      roomId={selectedRoomId}
+                      onDateSelect={handleDateSelect}
+                      selectedDate={selectedDate}
+                      publicMode={true} 
+                      catalogNode={
+                        selectedDate ? (
+                          <div className="p-4 mt-auto sticky bottom-0 bg-white border-t border-gray-200 z-10 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)]">
+                            <button
+                              onClick={() => setCalendarOpen(false)}
+                              className="w-full py-4 bg-primary text-white rounded-xl text-sm font-black flex items-center justify-center gap-2 hover:bg-primary/90 transition-all shadow-md shadow-primary/20"
+                            >
+                              Continue to Book on {fmtDateShort(selectedDate)} <ArrowDown size={16} />
+                            </button>
+                          </div>
+                        ) : null
+                      }
+                    />
                   </div>
+                  {!selectedDate && (
+                    <p className="text-center mt-4 text-xs text-gray-400 font-medium px-4">
+                      Tap a date on the calendar to view its availability.
+                    </p>
+                  )}
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col h-full p-4 md:p-8 gap-4 max-w-6xl mx-auto w-full animate-in fade-in duration-500">
-                <div className="flex flex-col sm:flex-row gap-3 flex-shrink-0">
-                  <div className="flex-1 flex items-start gap-3 bg-white/70 backdrop-blur-md border border-white/50 rounded-2xl px-5 py-4 shadow-sm">
-                    <div className="p-1.5 bg-primary/10 rounded-lg"><Sparkles size={16} className="text-primary flex-shrink-0" /></div>
-                    <p className="text-xs text-gray-600 font-medium leading-relaxed mt-1">Click any date to see existing bookings. Then hit <strong className="text-primary font-black">"Reserve on this date"</strong> to book.</p>
-                  </div>
-                  <div className="flex-1 flex items-start gap-3 bg-white/70 backdrop-blur-md border border-white/50 rounded-2xl px-5 py-4 shadow-sm">
-                    <div className="p-1.5 bg-amber-100 rounded-lg"><Lightbulb size={16} className="text-amber-600 flex-shrink-0" /></div>
-                    <p className="text-xs text-gray-600 font-medium leading-relaxed mt-1">Use the <strong className="text-amber-600 font-black">Magic Filter</strong> inside the calendar to search when an item is in use.</p>
-                  </div>
+              <div className="border-b border-black/5 px-4 py-2.5 flex items-center gap-3 bg-white">
+                <div className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center flex-shrink-0">
+                  <Check size={12} />
                 </div>
-                <div className="flex-1 bg-white/80 backdrop-blur-xl rounded-3xl shadow-sm border border-white/50 overflow-hidden min-h-0">
-                  <AvailabilityCalendar roomId={selectedRoomId} onDateSelect={handleCalendarDateSelect} selectedDate={calendarSelectedDate} />
+                <CalendarDays size={13} className="text-emerald-600 flex-shrink-0" />
+                <p className="flex-1 text-sm font-black text-gray-800">{fmtDateShort(selectedDate)}</p>
+                <button
+                  onClick={() => setCalendarOpen(true)}
+                  className="text-xs font-bold text-gray-400 hover:text-primary bg-gray-100 hover:bg-primary/10 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap flex-shrink-0"
+                >
+                  Change
+                </button>
+              </div>
+            )}
+
+            {!calendarOpen && (
+              <div className="border-b border-black/5">
+                <div className="px-4 py-3 flex items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <StepBadge step="2" complete={step2Done} locked={false} />
+                    <Timer size={13} className={step2Done ? 'text-emerald-600 flex-shrink-0' : 'text-gray-500 flex-shrink-0'} />
+                    <span className={`text-xs font-black uppercase tracking-wide truncate ${step2Done ? 'text-emerald-700' : 'text-gray-700'}`}>
+                      {step2Done
+                        ? `${pickupTime} – ${returnTimeDisplay} · ${DURATION_OPTIONS.find(o => o.mins === duration)?.label}`
+                        : 'Pick a time slot'}
+                    </span>
+                  </div>
+                  {step2Done && (
+                    <button
+                      onClick={() => { setPickupTime(''); setDuration(null); setCart([]); }}
+                      className="ml-2 text-xs font-bold text-gray-400 hover:text-primary bg-gray-100 hover:bg-primary/10 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+                    >
+                      Change
+                    </button>
+                  )}
                 </div>
-                {calendarSelectedDate && (
-                  <div className="flex-shrink-0 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white/90 backdrop-blur-xl border border-primary/20 rounded-2xl p-4 shadow-lg animate-in slide-in-from-bottom-4 duration-300">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="p-2 bg-primary/10 rounded-xl"><CalendarDays size={20} className="text-primary flex-shrink-0" /></div>
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Selected date</p>
-                        <p className="text-base font-black text-gray-800 tracking-tight truncate">{new Date(calendarSelectedDate + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
+
+                {!step2Done && (
+                  <div className="px-4 pb-4 space-y-4">
+
+                    {allDayBookings.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-bold text-gray-500 mb-1.5">
+                          Room bookings today (7 AM – 8 PM):
+                        </p>
+                        <TimelineBar bookings={allDayBookings} pickedWindow={pickedWindow} />
+                        <div className="flex justify-between text-[9px] text-gray-400 mt-0.5 px-0.5 font-medium">
+                          <span>7 AM</span>
+                          <span className="hidden sm:inline">10 AM</span>
+                          <span>12 PM</span>
+                          <span className="hidden sm:inline">3 PM</span>
+                          <span>5 PM</span>
+                          <span>8 PM</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-[10px] text-gray-400">
+                          <span className="flex items-center gap-1">
+                            <span className="w-2.5 h-2 rounded-sm bg-red-400/75 inline-block" />Booked
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-2.5 h-2 rounded-sm bg-teal-400/75 inline-block" />Your pick
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label
+                        htmlFor="pickup-time"
+                        className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide"
+                      >
+                        Start time
+                      </label>
+                      <div className="relative">
+                        <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                        <input
+                          id="pickup-time"
+                          type="time"
+                          min="07:00"
+                          max="19:50"
+                          value={pickupTime}
+                          onChange={e => {
+                            setPickupTime(e.target.value);
+                            setDuration(null);
+                          }}
+                          className="w-full bg-slate-50 border border-black/10 focus:border-primary rounded-xl pl-9 pr-3 py-3 text-sm font-black text-gray-800 outline-none transition-colors"
+                        />
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0 w-full sm:w-auto">
-                      <button onClick={() => setCalendarSelectedDate(null)} className="text-xs font-bold text-gray-400 hover:text-gray-600 px-4 py-3 rounded-xl hover:bg-gray-100 transition-colors w-full sm:w-auto">Clear</button>
-                      <button onClick={() => handleReserveOnDate(calendarSelectedDate)} className="flex items-center justify-center gap-2 py-3 px-6 bg-primary text-white rounded-xl text-sm font-black shadow-md shadow-primary/20 hover:bg-primary/90 transition-all hover:-translate-y-0.5 w-full sm:w-auto"><CalendarClock size={16} /> Reserve on this date <ArrowRight size={14} /></button>
+
+                    {pickupTime && (
+                      <div>
+                        <p className="text-[10px] font-bold text-gray-600 mb-2 uppercase tracking-wide">
+                          Duration
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {DURATION_OPTIONS.map(opt => {
+                            const valid = isSlotAvailable(pickupTime, opt.mins);
+                            const sel   = duration === opt.mins;
+                            return (
+                              <button
+                                key={opt.mins}
+                                disabled={!valid}
+                                onClick={() => setDuration(sel ? null : opt.mins)}
+                                aria-pressed={sel}
+                                className={`px-4 py-2.5 rounded-xl border-2 text-xs font-black transition-all
+                                  ${!valid
+                                    ? 'border-gray-200 bg-gray-100 text-gray-400 line-through cursor-not-allowed'
+                                    : sel
+                                      ? 'border-primary bg-primary text-white shadow-sm'
+                                      : 'border-black/10 bg-white text-gray-700 hover:border-primary/40'}`}
+                              >
+                                {opt.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {pickupTime && duration && (
+                      <div
+                        className={`text-xs font-bold px-4 py-3 rounded-xl flex items-start gap-2.5 transition-all leading-relaxed
+                          ${currentSlotOk
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-red-50 text-red-600 border border-red-200'}`}
+                      >
+                        {currentSlotOk ? (
+                          <>
+                            <Check size={16} className="shrink-0 mt-0.5" />
+                            <span>
+                              {pickupTime} – {addMins(pickupTime, duration)} looks free. Add items below to continue.
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                            <span>
+                              {timeToMins(pickupTime) < BREAK_END_MINS && (timeToMins(pickupTime) + duration) > BREAK_START_MINS 
+                                ? 'Reservations are closed during the 11:30 AM – 1:00 PM lunch break.'
+                                : 'Conflict detected. Try a different start time or duration.'}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {step2Done && (
+                  <div className="px-4 pb-3">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-2">
+                      <CheckCircle size={14} className="text-emerald-600 flex-shrink-0" />
+                      <span className="text-xs font-bold text-emerald-700">
+                        {pickupTime} – {returnTimeDisplay} · {fmtDateShort(selectedDate)} · Slot confirmed
+                      </span>
                     </div>
                   </div>
                 )}
               </div>
             )}
-          </div>
-        )}
 
-        {viewMode === 'reserve' && (
-          <>
-            {!selectedRoomId ? null : isRoomClosed ? null : (
-              <div className="max-w-6xl mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start pb-20 animate-in fade-in duration-500">
-                <div className="lg:col-span-7 flex flex-col gap-6">
-                  <div className="bg-white/70 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/50 shadow-sm relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-blue-400" />
-                    <SectionHead step={1} label="Reservation Type" />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {TYPE_CFG.map(({ id, Icon, label, sub, ring, icon, badge }) => {
-                        const active = resType === id;
-                        return (
-                          <button key={id} onClick={() => { setResType(id); setPickupDate(''); setPickupTime(''); setReturnTime(''); setRangeStart(''); setRangeEnd(''); }} className={`flex flex-col items-start gap-3 p-4 rounded-2xl border-2 text-left transition-all ${active ? ring : 'border-white/50 bg-white/50 hover:border-primary/20 hover:bg-white'}`}>
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors shadow-inner ${active ? icon : 'bg-gray-100 text-gray-400'}`}><Icon size={20} /></div>
-                            <div>
-                              <p className={`text-sm font-black leading-tight tracking-tight ${active ? 'text-gray-900' : 'text-gray-700'}`}>{label}</p>
-                              <p className={`text-[11px] font-medium leading-snug mt-1 ${active ? 'text-gray-700' : 'text-gray-500'}`}>{sub}</p>
-                            </div>
-                            {active && <span className={`mt-auto text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${badge}`}>Selected</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {resType === 'slot' && (
-                    <div className="bg-white/70 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/50 shadow-sm animate-in slide-in-from-top-4 duration-300">
-                      <SectionHead step={2} label="Select Date & Time" />
-                      
-                      {/* 🚨 ADDED: 3-column grid for Date, Pickup, and Expected Return */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-                        <div>
-                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">Date</label>
-                          <input type="date" min={todayISO} value={pickupDate} onChange={e => setPickupDate(e.target.value)} className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer shadow-sm" />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">Pickup Window</label>
-                          <input type="time" value={pickupTime} onChange={e => setPickupTime(e.target.value)} className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer shadow-sm" />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-1.5 mb-1.5">
-                            <Timer size={12} /> Expected Return
-                          </label>
-                          <input type="time" value={returnTime} onChange={e => setReturnTime(e.target.value)} className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer shadow-sm" />
-                        </div>
-                      </div>
-
-                      {pickupWindow ? (
-                        pickupWindow.isPast ? (
-                          <div className="flex items-start gap-4 p-4 bg-red-50/80 backdrop-blur-md border border-red-200 rounded-2xl shadow-sm">
-                            <div className="bg-red-100 p-2 rounded-xl flex-shrink-0"><AlertTriangle size={20} className="text-red-600" /></div>
-                            <div>
-                              <p className="text-[10px] font-black text-red-600 uppercase tracking-widest">Time Has Passed</p>
-                              <p className="text-base font-black text-red-900 mt-0.5 tracking-tight">{pickupWindow.display}</p>
-                              <p className="text-xs text-red-700 mt-1 font-medium">Please choose a future date and time.</p>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-start gap-4 p-4 bg-violet-50/80 backdrop-blur-md border border-violet-200 rounded-2xl shadow-sm">
-                            <div className="bg-violet-100 p-2 rounded-xl flex-shrink-0"><Timer size={20} className="text-violet-600" /></div>
-                            <div>
-                              <p className="text-[10px] font-black text-violet-600 uppercase tracking-widest flex items-center gap-1.5"><CalendarClock size={12} /> Pickup Window (PHT)</p>
-                              <p className="text-base font-black text-violet-900 mt-0.5 tracking-tight">{pickupWindow.display}</p>
-                              <p className="text-xs text-violet-700 mt-1 font-medium">Your QR code will only be valid during this exact 15-minute window.</p>
-                            </div>
-                          </div>
-                        )
-                      ) : (
-                        <p className="text-xs text-gray-500 font-medium bg-white/50 border border-black/5 p-4 rounded-xl text-center">Please fill in Date, Pickup, and Return times.</p>
-                      )}
-                    </div>
-                  )}
-
-                  {resType === 'range' && (
-                    <div className="bg-white/70 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/50 shadow-sm animate-in slide-in-from-top-4 duration-300">
-                      <SectionHead step={2} label="Select Date Range" />
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
-                        <div>
-                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">Start Date</label>
-                          <input type="date" min={todayISO} value={rangeStart} onChange={e => { setRangeStart(e.target.value); if (rangeEnd && e.target.value > rangeEnd) setRangeEnd(''); }} className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer shadow-sm" />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">End Date</label>
-                          <input type="date" min={rangeStart || todayISO} value={rangeEnd} onChange={e => setRangeEnd(e.target.value)} disabled={!rangeStart} className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer disabled:opacity-50 shadow-sm" />
-                        </div>
-                      </div>
-                      {rangeSummary ? (
-                        <div className="flex items-center gap-4 p-4 bg-teal-50/80 backdrop-blur-md border border-teal-200 rounded-2xl shadow-sm">
-                          <div className="bg-teal-100 p-2 rounded-xl shrink-0"><CalendarRange size={20} className="text-teal-600" /></div>
-                          <div>
-                            <p className="text-[10px] font-black text-teal-600 uppercase tracking-widest">Items Held For</p>
-                            <p className="text-base font-black text-teal-900 tracking-tight mt-0.5">{rangeSummary}</p>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-500 font-medium bg-white/50 border border-black/5 p-4 rounded-xl text-center">Please select both a Start and End date.</p>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="bg-white/70 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/50 shadow-sm">
-                    <SectionHead step={3} label="Select Equipment" />
-                    <p className="text-xs text-gray-500 mb-5 font-medium leading-relaxed">
-                      Search for the items you need and click <strong className="text-primary bg-primary/10 px-1.5 py-0.5 rounded-md font-black">+</strong> to add them. Use the quantity selector in your list to grab more than one!
-                    </p>
-                    <div className="relative mb-4">
-                      <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="text" placeholder="Type a category or item name..." className="w-full bg-white border border-black/10 rounded-2xl pl-12 pr-10 py-4 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all shadow-sm" value={inventorySearch} onChange={e => setInventorySearch(e.target.value)} />
-                      {inventorySearch && <button onClick={() => setInventorySearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 bg-gray-100 rounded-full p-1"><X size={14} /></button>}
-                    </div>
-                    <div className="grid grid-cols-1 gap-2.5 max-h-[380px] overflow-y-auto pr-2 custom-scrollbar">
-                      {filteredInventory.length === 0 ? (
-                        <div className="py-14 text-center text-gray-400 bg-white/50 rounded-2xl border border-black/5">
-                          <Package size={40} className="mx-auto mb-3 text-gray-300" />
-                          <p className="text-base font-black text-gray-600 tracking-tight">No items match</p>
-                          <p className="text-xs mt-1 font-medium">Try typing a different name.</p>
-                        </div>
-                      ) : filteredInventory.map(item => (
-                        <InvRow key={`res-${item.kind}-${item.inventory_type_id}-${item.stock_id || ''}`} item={item} />
-                      ))}
-                    </div>
-                  </div>
+            {!calendarOpen && (
+              <div className="border-b border-black/5">
+                <div className="px-4 py-3 flex items-center gap-2.5">
+                  <StepBadge step="3" complete={step3Done} locked={!step2Done} />
+                  <Layers size={13} className={step3Done ? 'text-emerald-600' : step2Done ? 'text-gray-500' : 'text-gray-300'} />
+                  <span className={`text-xs font-black uppercase tracking-wider ${step3Done ? 'text-emerald-700' : step2Done ? 'text-gray-700' : 'text-gray-400'}`}>
+                    Equipment{step3Done ? ` · ${cartTotalItems} item${cartTotalItems > 1 ? 's' : ''} added` : ''}
+                  </span>
+                  {!step2Done && <Lock size={12} className="ml-auto text-gray-300" />}
                 </div>
 
-                <div className="lg:col-span-5 flex flex-col gap-6 lg:sticky lg:top-6">
-                  <div className="bg-gray-900/90 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/10 shadow-lg text-white">
-                    <div className="flex items-center justify-between mb-5">
-                      <h3 className="text-[11px] font-black uppercase tracking-widest flex items-center gap-2 text-gray-300">
-                        <ShoppingBag size={16} className="text-primary" /> Selected Items
-                      </h3>
-                      <span className="text-[10px] font-black bg-primary text-white px-3 py-1 rounded-full shadow-sm">{cart.length}</span>
+                {!step2Done ? (
+                  <div className="px-4 pb-4">
+                    <div className="bg-gray-50 rounded-xl border border-dashed border-gray-200 py-6 px-4 text-center">
+                      <Lock size={24} className="text-gray-300 mx-auto mb-2" />
+                      <p className="text-xs font-bold text-gray-400">
+                        Set your time slot above to browse equipment.
+                      </p>
+                      <p className="text-[11px] text-gray-300 mt-1">
+                        Each item will show real-time availability for your selected time.
+                      </p>
                     </div>
-                    {cart.length === 0 ? (
-                      <div className="py-12 text-center text-gray-400 bg-black/20 rounded-2xl border border-white/5">
-                        <p className="text-sm font-black text-gray-300">Your list is empty.</p>
-                        <p className="text-xs mt-1.5 font-medium text-gray-500">Select equipment from the left side.</p>
+                  </div>
+                ) : (
+                  <div className="px-4 pb-4 space-y-3">
+                    <div className="relative bg-white border border-black/10 rounded-xl flex items-center px-3 py-2.5 shadow-sm focus-within:border-primary/40 transition-colors">
+                      <Search size={15} className="text-gray-400 flex-shrink-0" />
+                      <input
+                        type="search"
+                        placeholder="Search by name or barcode…"
+                        className="flex-1 min-w-0 bg-transparent border-none px-3 py-0 text-sm font-medium text-gray-900 outline-none placeholder:text-gray-400"
+                        value={inventorySearch}
+                        onChange={e => setInventorySearch(e.target.value)}
+                      />
+                      {inventorySearch && (
+                        <button
+                          onClick={() => setInventorySearch('')}
+                          aria-label="Clear search"
+                          className="p-1.5 bg-gray-100 rounded-full text-gray-500 hover:text-gray-900 flex-shrink-0"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[10px] text-gray-400 px-0.5 font-medium">
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-2 rounded-sm bg-red-400/75 inline-block" />Booked
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-2 rounded-sm bg-teal-400/75 inline-block" />Your slot
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-2 rounded-sm bg-gray-200 inline-block" />Free
+                      </span>
+                      <span className="text-gray-300 w-full sm:w-auto sm:ml-auto text-right">
+                        7 AM – 8 PM
+                      </span>
+                    </div>
+
+                    {loadingInv ? (
+                      <div className="flex items-center justify-center py-10">
+                        <Loader2 size={28} className="animate-spin text-gray-400" />
+                      </div>
+                    ) : groupedInventory.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-10 opacity-50">
+                        <PackageX size={36} className="text-gray-400 mb-2" />
+                        <p className="text-gray-500 font-bold text-sm text-center px-4">
+                          {inventorySearch
+                            ? `No equipment matching "${inventorySearch}"`
+                            : 'No equipment found for this room'}
+                        </p>
                       </div>
                     ) : (
-                      <div className="space-y-2.5 max-h-64 overflow-y-auto pr-2 custom-scrollbar-dark">
-                        {cart.map(item => <CartRow key={`cart-${item.kind}-${item.inventory_type_id}-${item.stock_id || ''}`} item={item} />)}
+                      <div className="space-y-3">
+                        {groupedInventory.map(group => (
+                          <InventoryGroupCard
+                            key={group.name}
+                            group={group}
+                            cart={cart}
+                            pickedWindow={pickedWindow}
+                            step2Done={step2Done}
+                            isItemBookedAtSlot={isItemBookedAtSlot}
+                            getBookingsForGroup={getBookingsForGroup}
+                            getBookingsForItem={getBookingsForItem}
+                            selectedDate={selectedDate}
+                            onAdd={addToCart}
+                            onRemove={removeFromCart}
+                            onAdjustQty={adjustCartQty}
+                          />
+                        ))}
                       </div>
                     )}
                   </div>
+                )}
+              </div>
+            )}
 
-                  <div className="bg-white/70 backdrop-blur-xl p-5 md:p-6 rounded-3xl border border-white/50 shadow-sm">
-                    <SectionHead step={4} label="Final Details" />
-                    <div className="space-y-5">
-                      <div>
-                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">What is this request for?</label>
-                        <select className="w-full bg-white border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer shadow-sm" value={purpose} onChange={e => { setPurpose(e.target.value); if (e.target.value !== 'Other') setCustomPurpose(''); }}>
-                          <option value="" disabled>— Tap to select a reason —</option>
-                          {PURPOSES.map(p => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                        {purpose === 'Other' && (
-                          <div className="mt-3 animate-in slide-in-from-top-2">
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">Please specify:</label>
-                            <input type="text" className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all shadow-sm" placeholder="Type your reason here..." value={customPurpose} onChange={e => setCustomPurpose(e.target.value)} autoFocus />
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5 flex items-center gap-1.5">
-                          <Mail size={14} className="text-gray-400" /> Notification Email
-                        </label>
-                        <input type="email" className="w-full bg-white border border-black/10 rounded-xl px-4 py-3 text-sm font-bold text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all shadow-sm" placeholder="Enter your email to receive updates" value={email} onChange={e => setEmail(e.target.value)} />
-                        <p className="text-[10px] text-gray-500 mt-1.5 font-medium">You will receive an email when your request is approved.</p>
-                      </div>
+            {step2Done && (
+              <div className="pb-32" ref={submitRef}>
+                <div className="px-4 py-3 flex items-center gap-2.5">
+                  <StepBadge step="4" complete={canSubmit} locked={false} />
+                  <ShoppingBag size={13} className={step3Done ? 'text-gray-500' : 'text-gray-300'} />
+                  <span className={`text-xs font-black uppercase tracking-wider ${step3Done ? 'text-gray-700' : 'text-gray-400'}`}>
+                    Cart &amp; Confirm
+                  </span>
+                </div>
+
+                <div className="px-4 pb-4 space-y-5">
+                  {cart.length === 0 ? (
+                    <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-black/10">
+                      <ShoppingBag size={28} className="mx-auto text-gray-300 mb-2" />
+                      <p className="text-xs font-bold text-gray-400">Your cart is empty</p>
+                      <p className="text-[11px] text-gray-300 mt-1">
+                        Add items from the catalog above.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {cart.map(item => (
+                        <CartRow
+                          key={cartKeyOf(item)}
+                          item={item}
+                          onAdjust={adjustCartQty}
+                          onRemove={removeFromCart}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <label
+                      htmlFor="purpose-select"
+                      className="block text-[10px] font-black text-gray-500 uppercase tracking-wider"
+                    >
+                      Purpose <span className="text-red-400">*</span>
+                    </label>
+                    <select
+                      id="purpose-select"
+                      className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors"
+                      value={purpose}
+                      onChange={e => setPurpose(e.target.value)}
+                    >
+                      <option value="" disabled>Select purpose…</option>
+                      {PURPOSES.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                    {purpose === 'Other' && (
+                      <input
+                        type="text"
+                        placeholder="Briefly describe your purpose…"
+                        className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors mt-2"
+                        value={customPurpose}
+                        onChange={e => setCustomPurpose(e.target.value)}
+                        maxLength={120}
+                      />
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label
+                      htmlFor="notif-email"
+                      className="block text-[10px] font-black text-gray-500 uppercase tracking-wider"
+                    >
+                      Notification email <span className="text-red-400">*</span>
+                    </label>
+                    <div className="relative">
+                      <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                      <input
+                        id="notif-email"
+                        type="email"
+                        placeholder="your@email.com"
+                        autoComplete="email"
+                        className="w-full bg-slate-50 border border-black/10 rounded-xl pl-10 pr-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                      />
                     </div>
                   </div>
 
+                  {!currentSlotOk && cart.length > 0 && (
+                    <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3.5 flex items-start gap-2.5">
+                      <AlertTriangle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs font-bold text-red-600 leading-relaxed">
+                        One or more items in your cart have a conflict at {pickupTime}.
+                        Remove the conflicting item or change your time slot above.
+                      </p>
+                    </div>
+                  )}
+
                   <button
-                    className="w-full py-4 md:py-5 bg-primary text-white rounded-2xl font-black text-lg shadow-lg shadow-primary/30 flex items-center justify-center gap-2 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/40 hover:bg-primary/90 transition-all disabled:opacity-50 disabled:pointer-events-none group"
                     onClick={handleSubmit}
-                    disabled={submitting || cart.length === 0 || (resType === 'slot' && !!pickupWindow?.isPast)}>
-                    {submitting ? <Loader2 size={24} className="animate-spin" /> : (
-                      <>Confirm Reservation <CheckCircle size={20} className="group-hover:scale-110 transition-transform" /></>
+                    disabled={submitting || !canSubmit}
+                    className="w-full py-4 bg-primary hover:bg-primary/90 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-2xl font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20 active:scale-[0.98] disabled:shadow-none disabled:active:scale-100"
+                  >
+                    {submitting ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                      <><CheckCircle2 size={18} /> Confirm Reservation</>
                     )}
                   </button>
+
+                  {!canSubmit && !submitting && (
+                    <p className="text-center text-[11px] text-gray-400 leading-relaxed px-4">
+                      {cart.length === 0
+                        ? 'Add at least one item from the catalog above'
+                        : !currentSlotOk
+                          ? '⚠ Time conflict — change your slot or remove the conflicting item'
+                          : !purpose
+                            ? 'Select a purpose for this request'
+                            : purpose === 'Other' && !customPurpose.trim()
+                              ? 'Describe your purpose in the field above'
+                              : 'Add a valid notification email'}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
-          </>
-        )}
-      </div>
 
-      {/* ── SUCCESS MODAL ── */}
-      {successData && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-300">
-          <div className="w-full max-w-md p-0 overflow-hidden text-center bg-white/90 backdrop-blur-2xl border border-white/50 shadow-2xl rounded-[40px] animate-in zoom-in-95 duration-400">
-            {!confirmClose ? (
-              <>
-                <div className="bg-emerald-500 text-white p-8 pb-10 text-center rounded-b-[40px] shadow-sm relative overflow-hidden">
-                  <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-2xl" />
-                  <div className="w-24 h-24 bg-white text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-xl"><CheckCircle2 size={48} /></div>
-                  <h2 className="text-3xl font-black tracking-tight">Success!</h2>
-                  <p className="text-sm font-medium mt-1.5 opacity-90 bg-black/10 inline-block px-3 py-1 rounded-full">Request #{successData.id}</p>
-                  {(successData.pickup_datetime || successData.pickup_start) && (
-                    <p className="text-xs font-black mt-3 opacity-90 flex items-center justify-center gap-1.5">
-                      <CalendarClock size={14} />
-                      {resType === 'range'
-                        ? `${fmtDatePH(successData.pickup_start)} → ${fmtDatePH(successData.pickup_end)}`
-                        : `${fmtDateLongPH(successData.pickup_datetime)} · ${fmtTimePH(successData.pickup_datetime)}`}
+            <div className="h-20" aria-hidden />
+          </div>
+
+          {selectedDate && !calendarOpen && (
+            <div className="flex-shrink-0 bg-white border-t border-black/8 px-4 py-4 z-20 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)] pb-safe">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  {cart.length > 0 ? (
+                    <>
+                      <p className="text-sm font-black text-gray-800 leading-none">
+                        {cartTotalItems} item{cartTotalItems !== 1 ? 's' : ''} in cart
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-1 truncate">
+                        {step2Done
+                          ? `${pickupTime} – ${returnTimeDisplay} · ${fmtDateShort(selectedDate)}`
+                          : 'Set a time slot first'}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-400 font-medium">
+                      {step2Done ? 'Add items from the catalog' : 'Set a time slot first'}
                     </p>
                   )}
                 </div>
+
+                {step2Done && (
+                  <button
+                    onClick={() =>
+                      submitRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }
+                    className={`flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-black transition-all flex-shrink-0
+                      ${canSubmit
+                        ? 'bg-primary text-white hover:bg-primary/90 shadow-md shadow-primary/20'
+                        : 'bg-gray-100 text-gray-500'}`}
+                  >
+                    {canSubmit ? <><CheckCircle2 size={16} /> Submit</> : 'Review ↓'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          SUCCESS MODAL
+      ══════════════════════════════════════════════════════════════════ */}
+      {successData && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-300">
+          <div className="w-full max-w-sm overflow-hidden text-center bg-white shadow-2xl rounded-[40px] animate-in zoom-in-95 duration-400">
+            {!confirmClose ? (
+              <>
+                <div className="bg-emerald-500 text-white p-8 pb-10 rounded-b-[40px]">
+                  <div className="w-20 h-20 bg-white text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-xl">
+                    <CheckCircle2 size={40} />
+                  </div>
+                  <h2 className="text-2xl font-black tracking-tight">Request Sent!</h2>
+                  <p className="text-sm mt-2 opacity-90 leading-relaxed">
+                    {fmtDateLong(successData.pickup_datetime)}
+                    <br />
+                    {fmtTime(successData.pickup_datetime)}
+                  </p>
+                </div>
+
                 <div className="p-8 -mt-6 relative">
-                  <div className="p-4 bg-white shadow-xl rounded-3xl inline-block mx-auto mb-6 border border-gray-100 transform hover:scale-105 transition-transform">
-                    <QRCodeSVG value={successData.qr_code} size={200} level="M" />
+                  <div className="p-4 bg-white shadow-xl rounded-3xl inline-block mx-auto mb-5 border border-gray-100">
+                    <QRCodeSVG
+                      value={String(successData.qr_code)}
+                      size={180}
+                      level="M"
+                    />
                   </div>
-                  <div className="bg-amber-50/80 backdrop-blur-sm border border-amber-200 p-5 rounded-2xl text-left mb-6 shadow-sm">
-                    <p className="font-black text-amber-900 text-xs flex items-center gap-2 mb-1.5 uppercase tracking-widest">
-                      <Camera size={16} className="text-amber-600 animate-pulse" /> TAKE A SCREENSHOT NOW
+
+                  <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl mb-5">
+                    <p className="font-black text-amber-900 text-[10px] flex items-center justify-center gap-1.5 mb-1">
+                      <Camera size={14} className="animate-pulse" /> SCREENSHOT THIS QR CODE
                     </p>
-                    <p className="text-xs text-amber-800 font-medium leading-relaxed">
-                      {resType === 'slot' ? 'Show this QR code to the Admin at the counter exactly during your 15-minute pickup window.' : 'Show this QR code to the Admin at the counter on your start date.'}
+                    <p className="text-[11px] text-amber-800 font-medium">
+                      Show this QR code at the counter during your pickup window.
+                      You won't be able to retrieve it after closing this screen.
                     </p>
                   </div>
-                  <button className="w-full py-4 bg-gray-900 hover:bg-black text-white text-sm rounded-2xl font-black tracking-wide shadow-md transition-all hover:-translate-y-0.5" onClick={() => setConfirmClose(true)}>
-                    I Have Saved My QR Code
+
+                  <button
+                    className="w-full py-4 bg-gray-900 hover:bg-black text-white text-sm rounded-2xl font-black transition-all"
+                    onClick={() => setConfirmClose(true)}
+                  >
+                    I've saved my QR code
                   </button>
                 </div>
               </>
             ) : (
-              <div className="p-10">
-                <div className="w-24 h-24 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertTriangle size={48} /></div>
-                <h2 className="text-2xl font-black text-gray-900 mb-2 tracking-tight">Are you absolutely sure?</h2>
-                <p className="text-sm text-gray-500 mb-8 font-medium leading-relaxed">If you close this without taking a screenshot, your QR code will be lost and you will have to create a brand new request.</p>
-                <div className="flex flex-col gap-3">
-                  <button className="w-full py-4 font-black border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-700 rounded-2xl transition-all" onClick={() => setConfirmClose(false)}>Go Back to QR Code</button>
-                  <button className="text-xs font-black text-red-500 hover:text-red-700 uppercase tracking-widest p-3 transition-colors" onClick={resetAll}>Yes, close and exit</button>
+              <div className="p-8">
+                <AlertTriangle size={48} className="text-amber-500 mx-auto mb-4" />
+                <h2 className="text-xl font-black mb-2">Did you save the QR?</h2>
+                <p className="text-sm text-gray-500 mb-6">
+                  Once you exit, you won't be able to retrieve this QR code.
+                </p>
+                <div className="space-y-3">
+                  <button
+                    className="w-full py-3 font-black bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                    onClick={() => setConfirmClose(false)}
+                  >
+                    Go back to QR code
+                  </button>
+                  <button
+                    className="w-full py-3 text-xs font-black text-red-500 hover:text-red-700 transition-colors"
+                    onClick={() => window.location.reload()}
+                  >
+                    Yes, I'm done — exit
+                  </button>
                 </div>
               </div>
             )}

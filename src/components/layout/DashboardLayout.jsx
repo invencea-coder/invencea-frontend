@@ -28,6 +28,8 @@ export default function DashboardLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [pendingCount, setPendingCount] = useState(0);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); 
+  
   const pageTitle = titleMap[location.pathname] || 'InvenCEA';
   const isAdmin = user?.role === 'admin';
 
@@ -97,14 +99,19 @@ export default function DashboardLayout() {
   }, [isAdmin, navigate, fetchPendingCount]);
 
   return (
-    <div className="flex min-h-screen bg-surface">
-      <div className="relative">
-        {/* Pass pendingCount to Sidebar to show the red badge */}
-        <Sidebar pendingCount={pendingCount} />
-      </div>
-      <div className="flex-1 flex flex-col min-h-screen overflow-hidden">
-        <Navbar pageTitle={pageTitle} />
-        <main className="flex-1 px-6 pb-8 overflow-y-auto page-enter">
+    <div className="flex min-h-screen bg-surface w-full overflow-hidden">
+      <Sidebar 
+        pendingCount={pendingCount} 
+        isOpen={isMobileMenuOpen} 
+        setIsOpen={setIsMobileMenuOpen} 
+      />
+
+      <div className="flex-1 flex flex-col min-h-screen w-full min-w-0">
+        <Navbar 
+          pageTitle={pageTitle} 
+          onMenuClick={() => setIsMobileMenuOpen(true)} 
+        />
+        <main className="flex-1 px-4 md:px-6 pb-8 overflow-y-auto page-enter">
           <Outlet />
         </main>
       </div>

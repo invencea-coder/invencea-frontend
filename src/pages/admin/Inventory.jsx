@@ -32,23 +32,26 @@ export default function Inventory() {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   
   const [isRoomLocked, setIsRoomLocked] = useState(false);
-  const [isLockedToFolder, setIsLockedToFolder] = useState(false); // New state to lock fields when adding to folder
+  const [isLockedToFolder, setIsLockedToFolder] = useState(false); 
 
   const defaultForm = {
     barcode:            '',
     name:               '',
     type:               'borrowable',
-    inventory_mode:     'unit',     
+    inventory_mode:     'unit',    
     quantity_total:     1,
     quantity_available: 1,
     qty_total:          1,          
     qty_available:      1,          
+    qty_damaged:        0,
+    qty_defective:      0,
     serial_number:      '',
     analog_digital:     'analog',
     authors:            '',
     year:               new Date().getFullYear().toString(),
     condition:          'Good',
     status:             'available',
+    original_status:    'available'
   };
   const [form, setForm] = useState(defaultForm);
 
@@ -94,7 +97,6 @@ export default function Inventory() {
 
   // ── GROUPING LOGIC (The "Folder" Architecture) ──
   const groupedAndFilteredFolders = useMemo(() => {
-    // 1. Group by inventory_type_id
     const groups = items.reduce((acc, curr) => {
       const tid = curr.inventory_type_id;
       if (!acc[tid]) {
@@ -107,37 +109,41 @@ export default function Inventory() {
           units: [],
           total_qty: 0,
           available_qty: 0,
+          damaged_qty: 0,
+          defective_qty: 0,
         };
       }
       acc[tid].units.push(curr);
       
-      // Tally Quantities
+      const itemMeta = parseMeta(curr.item_metadata);
+
+      // Tally Quantities & Conditions
       if (curr.inventory_mode === 'quantity') {
         acc[tid].total_qty += (curr.qty_total || 1);
         acc[tid].available_qty += (curr.qty_available || 0);
+        acc[tid].damaged_qty += parseInt(itemMeta.qty_damaged || 0, 10);
+        acc[tid].defective_qty += parseInt(itemMeta.qty_defective || 0, 10);
       } else if (curr.kind === 'consumable') {
         acc[tid].total_qty += (curr.quantity_total || 1);
         acc[tid].available_qty += (curr.quantity_available || 0);
       } else {
         acc[tid].total_qty += 1;
         acc[tid].available_qty += (curr.status === 'available' ? 1 : 0);
+        if (itemMeta.condition === 'Damaged') acc[tid].damaged_qty += 1;
+        if (itemMeta.condition === 'Defective') acc[tid].defective_qty += 1;
       }
       return acc;
     }, {});
 
-    // 2. Filter & Search
     let result = Object.values(groups).map(folder => {
-      // Filter out archived units from the folder unless 'showArchived' is active
       const validUnits = folder.units.filter(u => showArchived ? u.status === 'archived' : u.status !== 'archived');
       return { ...folder, units: validUnits };
     }).filter(folder => {
-      // Hide empty folders
       if (folder.units.length === 0) return false;
       
       const q = searchQuery.toLowerCase().trim();
       if (!q) return true;
 
-      // Search matches Folder Name OR specific Barcode/Serial inside it
       if (folder.name.toLowerCase().includes(q)) return true;
       if (roomId === 3) {
         const authors = str(folder.type_metadata.authors).toLowerCase();
@@ -151,10 +157,8 @@ export default function Inventory() {
       });
     });
 
-    // Sort alphabetically
     return result.sort((a, b) => a.name.localeCompare(b.name));
   }, [items, searchQuery, showArchived, roomId]);
-
 
   // ── MODAL ACTIONS ──
   const openAddModal = () => {
@@ -162,11 +166,10 @@ export default function Inventory() {
     setForm(defaultForm);
     setIsEdit(false);
     setEditId(null);
-    setIsLockedToFolder(false); // Allow full editing
+    setIsLockedToFolder(false);
     setShowModal(true);
   };
 
-  // Shortcut to add a new physical unit inside an existing Folder
   const openAddToFolderModal = (folder) => {
     if (isRoomLocked) return;
     setForm({
@@ -179,7 +182,7 @@ export default function Inventory() {
     });
     setIsEdit(false);
     setEditId(null);
-    setIsLockedToFolder(true); // Lock name/mode so it groups correctly in the DB
+    setIsLockedToFolder(true);
     setShowModal(true);
   };
 
@@ -197,12 +200,15 @@ export default function Inventory() {
         quantity_available: item.quantity_available ?? 0,
         qty_total:          item.qty_total   ?? 1,
         qty_available:      item.qty_available ?? 0,
+        qty_damaged:        parseInt(itemMeta.qty_damaged || 0, 10),
+        qty_defective:      parseInt(itemMeta.qty_defective || 0, 10),
         serial_number:      str(itemMeta.serial_number),
         analog_digital:     itemMeta.analog_digital  || 'analog',
         authors:            str(typeMeta.authors),
         year:               str(typeMeta.year) || new Date().getFullYear().toString(),
         condition:          itemMeta.condition  || 'Good',
         status:             item.status         || 'available',
+        original_status:    item.status         || 'available',
       });
       setEditId(item.item_id ?? item.id);
       setIsEdit(true);
@@ -219,12 +225,33 @@ export default function Inventory() {
   const handleSaveItem = async () => {
     if (isRoomLocked) return;
     if (!form.barcode.trim() || !form.name.trim()) return toast.error('Barcode and Name are required');
+    
+    // ⚡ FIX: Strict validation to prevent Available > Total
+    if (form.inventory_mode === 'quantity') {
+      const t = parseInt(form.qty_total, 10) || 1;
+      const a = parseInt(form.qty_available, 10);
+      if (!isNaN(a) && a > t) {
+        return toast.error(`Available quantity (${a}) cannot exceed Total quantity (${t}).`);
+      }
+    } else if (form.type === 'consumable' && roomId !== 3) {
+      const t = parseInt(form.quantity_total, 10) || 1;
+      const a = parseInt(form.quantity_available, 10);
+      if (!isNaN(a) && a > t) {
+        return toast.error(`Available quantity (${a}) cannot exceed Total quantity (${t}).`);
+      }
+    }
+
     setSaving(true);
     try {
       const isThesis = roomId === 3;
       const itemType = isThesis ? 'borrowable' : form.type;
 
-      const itemMeta = { condition: form.condition };
+      // Bundle standard and bulk conditions into item_metadata
+      const itemMeta = { 
+        condition: form.condition,
+        qty_damaged: parseInt(form.qty_damaged, 10) || 0,
+        qty_defective: parseInt(form.qty_defective, 10) || 0
+      };
       const typeMeta = {};
       
       if (roomId === 1 || roomId === 2) itemMeta.serial_number = form.serial_number;
@@ -242,15 +269,15 @@ export default function Inventory() {
         inventory_mode: form.inventory_mode,
       };
 
+      // Handle custom available vs total quantities for bulk & consumables
       if (form.inventory_mode === 'quantity') {
-        payload.quantity_total = parseInt(form.qty_total, 10) || 1;
-        if (isEdit) {
-          payload.qty_total     = parseInt(form.qty_total, 10) || 1;
-          payload.qty_available = parseInt(form.qty_available, 10);
-        }
+        payload.qty_total = parseInt(form.qty_total, 10) || 1;
+        payload.qty_available = parseInt(form.qty_available, 10);
+        if (isNaN(payload.qty_available)) payload.qty_available = payload.qty_total;
       } else if (itemType === 'consumable') {
         payload.quantity_total = parseInt(form.quantity_total, 10) || 1;
-        if (isEdit) payload.quantity_available = parseInt(form.quantity_available, 10);
+        payload.quantity_available = parseInt(form.quantity_available, 10);
+        if (isNaN(payload.quantity_available)) payload.quantity_available = payload.quantity_total;
       }
 
       if (isEdit) {
@@ -373,6 +400,10 @@ export default function Inventory() {
                   </div>
                   
                   <div className="flex items-center gap-6">
+                    <div className="flex gap-2 items-center mr-2">
+                      {folder.damaged_qty > 0 && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-black tracking-wider uppercase border border-amber-200">{folder.damaged_qty} Damaged</span>}
+                      {folder.defective_qty > 0 && <span className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-black tracking-wider uppercase border border-red-200">{folder.defective_qty} Defective</span>}
+                    </div>
                     <div className="text-right">
                       <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Available / Total</p>
                       <p className="font-black text-lg text-gray-800 leading-none mt-0.5">
@@ -418,26 +449,34 @@ export default function Inventory() {
                                 <td className="px-4 py-3 font-mono font-bold text-primary">{str(unit.barcode)}</td>
                                 
                                 {!isQtyMode && folder.kind !== 'consumable' && (
-  <td className="px-4 py-3">
-    {roomId === 3 ? (
-      <div className="max-w-sm">
-        <span className="block font-bold text-gray-800 line-clamp-1" title={itemMeta.title}>{itemMeta.title || '—'}</span>
-        <span className="block text-[9px] text-gray-500 line-clamp-1 mt-0.5" title={itemMeta.authors}>{itemMeta.authors}</span>
-        <span className="block text-[9px] text-blue-500 font-mono mt-0.5">{itemMeta.code}</span>
-      </div>
-    ) : (
-      <>
-        <span className="font-mono text-gray-700">{itemMeta.serial_number || '—'}</span>
-        {roomId === 2 && itemMeta.analog_digital && itemMeta.analog_digital !== 'n/a' && (
-          <span className="block text-[9px] font-black text-blue-500 uppercase mt-0.5">{itemMeta.analog_digital}</span>
-        )}
-      </>
-    )}
-  </td>
-)}
+                                  <td className="px-4 py-3">
+                                    {roomId === 3 ? (
+                                      <div className="max-w-sm">
+                                        <span className="block font-bold text-gray-800 line-clamp-1" title={itemMeta.title}>{itemMeta.title || '—'}</span>
+                                        <span className="block text-[9px] text-gray-500 line-clamp-1 mt-0.5" title={itemMeta.authors}>{itemMeta.authors}</span>
+                                        <span className="block text-[9px] text-blue-500 font-mono mt-0.5">{itemMeta.code}</span>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <span className="font-mono text-gray-700">{itemMeta.serial_number || '—'}</span>
+                                        {roomId === 2 && itemMeta.analog_digital && itemMeta.analog_digital !== 'n/a' && (
+                                          <span className="block text-[9px] font-black text-blue-500 uppercase mt-0.5">{itemMeta.analog_digital}</span>
+                                        )}
+                                      </>
+                                    )}
+                                  </td>
+                                )}
 
                                 <td className="px-4 py-3">
-                                  {folder.kind === 'consumable' || isQtyMode ? <span className="text-muted">—</span> : (
+                                  {isQtyMode ? (
+                                    <div className="flex gap-1.5 flex-wrap">
+                                      {parseInt(itemMeta.qty_damaged || 0, 10) > 0 && <span className="text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded">{itemMeta.qty_damaged} Damaged</span>}
+                                      {parseInt(itemMeta.qty_defective || 0, 10) > 0 && <span className="text-[9px] font-black uppercase tracking-wider bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded">{itemMeta.qty_defective} Defective</span>}
+                                      {(!parseInt(itemMeta.qty_damaged || 0, 10) && !parseInt(itemMeta.qty_defective || 0, 10)) && <span className="text-gray-400">—</span>}
+                                    </div>
+                                  ) : folder.kind === 'consumable' ? (
+                                    <span className="text-muted">—</span>
+                                  ) : (
                                     <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${conditionColor(itemMeta.condition)}`}>
                                       {itemMeta.condition || 'Good'}
                                     </span>
@@ -446,13 +485,19 @@ export default function Inventory() {
 
                                 <td className="px-4 py-3">
                                   {isQtyMode ? (
-                                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${unit.qty_available > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                      {unit.qty_available > 0 ? 'In Stock' : 'Out of Stock'}
-                                    </span>
+                                    <div className="flex flex-col gap-1">
+                                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider w-fit ${unit.qty_available > 0 ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'}`}>
+                                        {unit.qty_available > 0 ? `${unit.qty_available} Available` : 'Out of Stock'}
+                                      </span>
+                                      <span className="text-[9px] text-gray-500 font-bold ml-1">{unit.qty_total} Total</span>
+                                    </div>
                                   ) : folder.kind === 'consumable' ? (
-                                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${unit.quantity_available > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                      {unit.quantity_available > 0 ? 'In Stock' : 'Out of Stock'}
-                                    </span>
+                                    <div className="flex flex-col gap-1">
+                                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider w-fit ${unit.quantity_available > 0 ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'}`}>
+                                        {unit.quantity_available > 0 ? `${unit.quantity_available} Available` : 'Out of Stock'}
+                                      </span>
+                                      <span className="text-[9px] text-gray-500 font-bold ml-1">{unit.quantity_total} Total</span>
+                                    </div>
                                   ) : (
                                     <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${statusColor(unit.status)}`}>{unit.status}</span>
                                   )}
@@ -533,6 +578,26 @@ export default function Inventory() {
                 <NeumorphInput label="Barcode (Required)" value={form.barcode} disabled={isEdit} onChange={e => setForm({ ...form, barcode: e.target.value })} placeholder="Scan or type barcode..." />
                 <NeumorphInput label="Authors (comma-separated)" value={form.authors} disabled={isLockedToFolder} onChange={e => setForm({ ...form, authors: e.target.value })} />
                 <NeumorphInput label="Year Published" type="number" value={form.year} disabled={isLockedToFolder} onChange={e => setForm({ ...form, year: e.target.value })} />
+                
+                {/* Ensure Thesis has a status dropdown too */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 block">Status</label>
+                  <select 
+                    className="neu-input w-full text-sm disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed" 
+                    value={form.status} 
+                    onChange={e => setForm({ ...form, status: e.target.value })}
+                    disabled={isEdit && form.original_status !== 'available' && form.original_status !== 'unavailable'}
+                  >
+                    <option value="available">Available</option>
+                    <option value="unavailable">Unavailable (Hidden)</option>
+                    
+                    {/* System-managed statuses */}
+                    {form.original_status === 'borrowed' && <option value="borrowed">Borrowed</option>}
+                    {form.original_status === 'reserved' && <option value="reserved">Reserved</option>}
+                    
+                    <option value="archived">Archived (Bin)</option>
+                  </select>
+                </div>
               </div>
             ) : (
               /* ── STANDARD INVENTORY FIELDS ── */
@@ -544,7 +609,7 @@ export default function Inventory() {
 
                 {/* Fields for Unique Units */}
                 {form.inventory_mode === 'unit' && form.type === 'borrowable' && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
+                  <div className={`grid grid-cols-1 md:grid-cols-${roomId === 2 ? '4' : '3'} gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200`}>
                     <NeumorphInput label="Serial Number" value={form.serial_number} onChange={e => setForm({ ...form, serial_number: e.target.value })} placeholder="Optional" />
                     
                     <div>
@@ -556,7 +621,8 @@ export default function Inventory() {
                       </select>
                     </div>
 
-                    {roomId === 2 ? (
+                    {/* Show Signal Type ONLY for Room 2, without hiding the Status field */}
+                    {roomId === 2 && (
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 block">Signal Type</label>
                         <select className="neu-input w-full text-sm" value={form.analog_digital} onChange={e => setForm({ ...form, analog_digital: e.target.value })}>
@@ -565,24 +631,37 @@ export default function Inventory() {
                           <option value="n/a">Not Applicable</option>
                         </select>
                       </div>
-                    ) : (
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 block">Status</label>
-                        <select className="neu-input w-full text-sm" value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-                          <option value="available">Available</option>
-                          <option value="unavailable">Unavailable (Hidden)</option>
-                          <option value="archived">Archived (Bin)</option>
-                        </select>
-                      </div>
                     )}
+
+                    {/* Status is now ALWAYS visible for unique units */}
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 block">Status</label>
+                      <select 
+                        className="neu-input w-full text-sm disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed" 
+                        value={form.status} 
+                        onChange={e => setForm({ ...form, status: e.target.value })}
+                        disabled={isEdit && form.original_status !== 'available' && form.original_status !== 'unavailable'}
+                      >
+                        <option value="available">Available</option>
+                        <option value="unavailable">Unavailable (Hidden)</option>
+                        
+                        {/* System-managed statuses */}
+                        {form.original_status === 'borrowed' && <option value="borrowed">Borrowed</option>}
+                        {form.original_status === 'reserved' && <option value="reserved">Reserved</option>}
+                        
+                        <option value="archived">Archived (Bin)</option>
+                      </select>
+                    </div>
                   </div>
                 )}
 
                 {/* Fields for Bulk Items */}
                 {form.inventory_mode === 'quantity' && (
-                  <div className="grid grid-cols-2 gap-4 bg-violet-50/50 p-4 rounded-xl border border-violet-100">
-                    <NeumorphInput label="Total Pieces in Batch" type="number" min="1" value={form.qty_total} onChange={e => setForm({ ...form, qty_total: e.target.value })} />
-                    {isEdit && <NeumorphInput label="Currently Available" type="number" min="0" value={form.qty_available} onChange={e => setForm({ ...form, qty_available: e.target.value })} />}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-violet-50/50 p-4 rounded-xl border border-violet-100">
+                    <NeumorphInput label="Total in Batch" type="number" min="1" value={form.qty_total} onChange={e => setForm({ ...form, qty_total: e.target.value })} />
+                    <NeumorphInput label="Available (Usable)" type="number" min="0" max={form.qty_total} value={form.qty_available} onChange={e => setForm({ ...form, qty_available: e.target.value })} />
+                    <NeumorphInput label="Damaged Qty" type="number" min="0" max={form.qty_total} value={form.qty_damaged} onChange={e => setForm({ ...form, qty_damaged: e.target.value })} />
+                    <NeumorphInput label="Defective Qty" type="number" min="0" max={form.qty_total} value={form.qty_defective} onChange={e => setForm({ ...form, qty_defective: e.target.value })} />
                   </div>
                 )}
 
@@ -590,7 +669,7 @@ export default function Inventory() {
                 {form.type === 'consumable' && (
                   <div className="grid grid-cols-2 gap-4 bg-amber-50/50 p-4 rounded-xl border border-amber-100">
                     <NeumorphInput label="Total Starting Quantity" type="number" min="1" value={form.quantity_total} onChange={e => setForm({ ...form, quantity_total: e.target.value })} />
-                    {isEdit && <NeumorphInput label="Remaining Quantity" type="number" min="0" value={form.quantity_available} onChange={e => setForm({ ...form, quantity_available: e.target.value })} />}
+                    <NeumorphInput label="Currently Available" type="number" min="0" max={form.quantity_total} value={form.quantity_available} onChange={e => setForm({ ...form, quantity_available: e.target.value })} />
                   </div>
                 )}
               </>

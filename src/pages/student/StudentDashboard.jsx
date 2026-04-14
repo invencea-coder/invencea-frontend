@@ -1,10 +1,11 @@
 // src/pages/student/StudentDashboard.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, FileText, KeyRound, QrCode, AlertTriangle, Clock, Package, CheckCircle2, XCircle } from 'lucide-react';
+import { PlusCircle, FileText, KeyRound, QrCode, AlertTriangle, Clock, Package, CheckCircle2, XCircle, Barcode, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuth } from '../../context/AuthContext.jsx';
+import api from '../../api/axiosClient.js';
 import { listRequests } from '../../api/requestAPI.js';
 import { changeStudentPin } from '../../api/authAPI.js';
 import NeumorphCard from '../../components/ui/NeumorphCard.jsx';
@@ -47,13 +48,16 @@ export default function StudentDashboard() {
   const [changingPin, setChangingPin] = useState(false);
 
   const [selectedTicket, setSelectedTicket] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
 
-  useEffect(() => {
+  const loadRequests = () => {
     listRequests({})
       .then(r => setRequests(r.data?.data || r.data || []))
       .catch(() => toast.error("Could not load your requests."))
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { loadRequests(); }, []);
 
   const { activeRequests, history, overdueCount } = useMemo(() => {
     const active = [];
@@ -62,14 +66,18 @@ export default function StudentDashboard() {
     const now = new Date();
 
     requests.forEach(req => {
-      const s = req.status?.toUpperCase();
-      const isOverdue = s === 'ISSUED' && req.return_deadline && new Date(req.return_deadline) < now;
+      let s = req.status?.toUpperCase();
+      
+      // Auto mapping EXPIRED to EXPIRED (VOID) for clarity
+      if (s === 'EXPIRED') s = 'EXPIRED (VOID)';
+
+      const isOverdue = (s === 'ISSUED' || s === 'PARTIALLY RETURNED') && req.return_deadline && new Date(req.return_deadline) < now;
       if (isOverdue) overdue++;
 
       if (['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(s)) {
-        active.push({ ...req, isOverdue });
+        active.push({ ...req, status: s, isOverdue });
       } else {
-        hist.push(req);
+        hist.push({ ...req, status: s });
       }
     });
 
@@ -107,10 +115,25 @@ export default function StudentDashboard() {
     }
   };
 
+  // ⚡ FIX: Add direct cancellation for student side
+  const handleCancelRequest = async (id) => {
+    if (!window.confirm("Are you sure you want to cancel this request?")) return;
+    setCancelling(true);
+    try {
+      await api.put(`/requests/${id}/cancel`);
+      toast.success("Request cancelled successfully.");
+      setSelectedTicket(null);
+      loadRequests();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to cancel request.");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-5 pb-20">
       
-      {/* ─── OVERDUE BANNER ─── */}
       {overdueCount > 0 && (
         <div className="bg-red-50 border border-red-200 p-4 rounded-2xl flex items-start gap-3 animate-pulse shadow-sm">
           <div className="bg-red-100 text-red-600 p-2 rounded-xl mt-0.5"><AlertTriangle size={20} /></div>
@@ -121,7 +144,6 @@ export default function StudentDashboard() {
         </div>
       )}
 
-      {/* ─── USER PROFILE CARD ─── */}
       <NeumorphCard className="p-5 flex justify-between items-center bg-white shadow-sm border border-black/5">
         <div>
           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Student Portal</p>
@@ -134,7 +156,6 @@ export default function StudentDashboard() {
         </button>
       </NeumorphCard>
 
-      {/* ─── ACTION BUTTONS (MOBILE FRIENDLY) ─── */}
       <div className="grid grid-cols-2 gap-4">
         <NeumorphCard hover className="p-5 flex flex-col items-center justify-center gap-2 cursor-pointer bg-primary/5 border border-primary/20 shadow-sm" onClick={() => navigate('/student/new-request')}>
           <div className="w-12 h-12 rounded-full bg-primary text-white flex items-center justify-center shadow-md shadow-primary/30">
@@ -151,7 +172,6 @@ export default function StudentDashboard() {
         </NeumorphCard>
       </div>
 
-      {/* ─── ACTIVE REQUESTS (DIGITAL TICKET WALLET) ─── */}
       <div className="space-y-3">
         <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5 ml-1">
           <Clock size={14} /> Active Activity
@@ -180,10 +200,11 @@ export default function StudentDashboard() {
                     <p className="text-sm font-black text-gray-800 mt-2">{r.purpose || 'General Use'}</p>
                     <p className="text-xs font-medium text-gray-500 mt-0.5">#{r.id} • {r.items?.length || 0} items</p>
                   </div>
-                  {s === 'APPROVED' && (
-                    <button onClick={() => setSelectedTicket(r)} className="flex flex-col items-center justify-center p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200 transition-colors shadow-sm">
+                  
+                  {['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(s) && (
+                    <button onClick={() => setSelectedTicket(r)} className="flex flex-col items-center justify-center p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200 transition-colors shadow-sm">
                       <QrCode size={20} className="mb-1" />
-                      <span className="text-[9px] font-black uppercase tracking-wider">Show QR</span>
+                      <span className="text-[9px] font-black uppercase tracking-wider">Details</span>
                     </button>
                   )}
                 </div>
@@ -214,7 +235,6 @@ export default function StudentDashboard() {
         )}
       </div>
 
-      {/* ─── RECENT HISTORY ─── */}
       {history.length > 0 && (
         <div className="space-y-3 pt-4">
           <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5 ml-1">
@@ -240,32 +260,63 @@ export default function StudentDashboard() {
         </div>
       )}
 
-      {/* ─── DIGITAL TICKET MODAL (QR CODE) ─── */}
-      <NeumorphModal open={!!selectedTicket} onClose={() => setSelectedTicket(null)} title="Your Digital Ticket" size="sm">
+      {/* ─── DIGITAL TICKET & ITEM DETAILS MODAL ─── */}
+      <NeumorphModal open={!!selectedTicket} onClose={() => setSelectedTicket(null)} title={`Request #${selectedTicket?.id}`} size="md">
         {selectedTicket && (
-          <div className="space-y-6 flex flex-col items-center p-2 text-center">
-            <div className="space-y-1">
-              <h3 className="text-xl font-black text-gray-800">#{selectedTicket.id}</h3>
-              <p className="text-sm font-bold text-gray-500">{selectedTicket.purpose || 'General Use'}</p>
+          <div className="space-y-4 flex flex-col items-center">
+            
+            <div className="p-4 bg-white border border-black/10 rounded-2xl shadow-sm inline-block">
+              <QRCodeSVG value={selectedTicket.qr_code || String(selectedTicket.id)} size={160} />
             </div>
             
-            <div className="p-4 bg-white border-2 border-black/10 rounded-2xl shadow-sm inline-block">
-              <QRCodeSVG value={selectedTicket.qr_code || String(selectedTicket.id)} size={200} />
+            <div className="w-full text-left mt-2 border-t border-black/5 pt-4">
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                <Package size={14} /> Requested Items
+              </h4>
+              <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
+                {selectedTicket.items?.map((it, i) => (
+                  <div key={i} className="flex justify-between items-start p-3 bg-gray-50 rounded-xl border border-black/5">
+                    <div>
+                      <p className="text-xs font-bold text-gray-800 leading-snug">{it.item_name}</p>
+                      {(it.inventory_item_barcode || it.stock_barcode || it.consumable_barcode || it.barcode) && (
+                        <p className="text-[10px] font-mono text-gray-500 mt-1 flex items-center gap-1">
+                          <Barcode size={10} /> {it.inventory_item_barcode || it.stock_barcode || it.consumable_barcode || it.barcode}
+                        </p>
+                      )}
+                      {it.item_status && (
+                        <span className={`text-[9px] font-bold uppercase mt-1.5 inline-block px-1.5 py-0.5 rounded ${['EXPIRED', 'REJECTED', 'CANCELLED'].includes(it.item_status) ? 'bg-red-100 text-red-600' : it.item_status === 'RETURNED' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                          {it.item_status === 'EXPIRED' ? 'EXPIRED (VOID)' : it.item_status}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs font-black text-primary bg-primary/10 px-2 py-0.5 rounded-md shrink-0 ml-2">
+                      ×{it.qty_requested || it.quantity}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-            
-            <div className="w-full bg-gray-50 p-4 rounded-xl border border-black/5 space-y-2">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Present to Admin</p>
-              <p className="text-xs font-medium text-gray-600">Please have your screen bright and hold this code up to the scanner at the equipment room window.</p>
+
+            <div className="w-full pt-4 flex gap-3 border-t border-black/5">
+              {['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(selectedTicket.status?.toUpperCase()) && (
+                <NeumorphButton
+                  variant="outline"
+                  className="flex-1 py-3 font-bold text-red-500 hover:text-red-600 hover:bg-red-50 border-red-200 transition-colors"
+                  onClick={() => handleCancelRequest(selectedTicket.id)}
+                  loading={cancelling}
+                >
+                  <XCircle size={16} className="mr-1.5" /> Cancel Request
+                </NeumorphButton>
+              )}
+              <NeumorphButton variant="primary" className="flex-1 py-3 font-bold shadow-md shadow-primary/20" onClick={() => setSelectedTicket(null)}>
+                Close Details
+              </NeumorphButton>
             </div>
-            
-            <NeumorphButton variant="primary" className="w-full py-3 font-bold" onClick={() => setSelectedTicket(null)}>
-              Close Ticket
-            </NeumorphButton>
+
           </div>
         )}
       </NeumorphModal>
 
-      {/* ─── CHANGE PIN MODAL ─── */}
       <NeumorphModal open={isPinModalOpen} onClose={() => setIsPinModalOpen(false)} title="Change Security PIN">
         <form onSubmit={handlePinSubmit} className="space-y-4 p-2 mt-2">
           <NeumorphInput
