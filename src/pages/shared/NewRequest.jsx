@@ -128,6 +128,9 @@ const maxQtyOf = (item) =>
 
 const isCalendarEventExpired = (ev) => {
   const status = ev.status?.toUpperCase();
+  // Active issuances are never "expired" in the context of freeing up calendar space
+  if (['ISSUED', 'PARTIALLY RETURNED'].includes(status)) return false;
+  
   if (!['PENDING', 'APPROVED', 'PENDING APPROVAL'].includes(status)) return false;
 
   const now = Date.now();
@@ -854,7 +857,7 @@ export default function NewRequest() {
 
       for (const ev of calendarEvents) {
         if (isCalendarEventExpired(ev)) continue;
-        if (!['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(ev.status?.toUpperCase())) continue;
+        if (!['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(ev.status?.toUpperCase())) continue;
 
         const evStart = new Date(
           ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
@@ -920,33 +923,45 @@ export default function NewRequest() {
   );
 
   const allDayBookings = useMemo(() => {
-    if (!selectedDate || !calendarEvents.length) return [];
-    const seen    = new Set();
-    const results = [];
-    for (const ev of calendarEvents) {
-      if (isCalendarEventExpired(ev)) continue;
+  if (!selectedDate || !calendarEvents.length) return [];
+  const seen    = new Set();
+  const results = [];
+  
+  const targetStart = new Date(`${selectedDate}T00:00:00+08:00`);
+  const targetEnd   = new Date(`${selectedDate}T23:59:59+08:00`);
 
-      const evStart = new Date(
-        ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
-      );
-      if (dateToPHTDate(evStart) !== selectedDate) continue;
+  for (const ev of calendarEvents) {
+    if (isCalendarEventExpired(ev)) continue;
+    // ⚡ FIX: Added ISSUED and PARTIALLY RETURNED
+    if (!['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(ev.status?.toUpperCase())) continue;
 
-      const rawEnd = ev.return_deadline ?? ev.pickup_end;
-      const evEnd  = rawEnd
-        ? new Date(rawEnd)
-        : new Date(evStart.getTime() + 60 * 60_000);
+    const evStart = new Date(
+      ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
+    );
+    const rawEnd = ev.return_deadline ?? ev.pickup_end;
+    const evEnd  = rawEnd
+      ? new Date(rawEnd)
+      : new Date(evStart.getTime() + 60 * 60_000);
 
-      const st = dateToPHTTime(evStart);
-      const en = dateToPHTTime(evEnd);
-      if (!st || !en) continue;
-      const k = `${st}-${en}`;
-      if (!seen.has(k)) {
-        seen.add(k);
-        results.push({ startMins: timeToMins(st), endMins: timeToMins(en) });
-      }
+    // Skip if the event doesn't touch the selected date at all
+    if (evEnd <= targetStart || evStart >= targetEnd) continue;
+
+    // Clamp the times to fit within today's visual bar
+    const clampedStart = evStart < targetStart ? targetStart : evStart;
+    const clampedEnd   = evEnd > targetEnd ? targetEnd : evEnd;
+
+    const st = dateToPHTTime(clampedStart);
+    const en = dateToPHTTime(clampedEnd);
+    if (!st || !en) continue;
+    
+    const k = `${st}-${en}`;
+    if (!seen.has(k)) {
+      seen.add(k);
+      results.push({ startMins: timeToMins(st), endMins: timeToMins(en) });
     }
-    return results;
-  }, [selectedDate, calendarEvents]);
+  }
+  return results;
+}, [selectedDate, calendarEvents]);
 
   // ── Availability checks ────────────────────────────────────────────────────
   const isSlotAvailable = useCallback(
@@ -969,7 +984,7 @@ export default function NewRequest() {
       if (cart.length > 0) {
         for (const ev of calendarEvents) {
           if (isCalendarEventExpired(ev)) continue;
-          if (!['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(ev.status?.toUpperCase())) continue;
+          if (!['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(ev.status?.toUpperCase())) continue;
 
           const evStart = new Date(
             ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
