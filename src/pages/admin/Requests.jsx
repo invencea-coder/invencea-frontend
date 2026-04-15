@@ -1379,18 +1379,34 @@ export default function AdminRequests() {
             <button
               onClick={(e) => { e.currentTarget.blur(); setCameraModal(true); }}
               disabled={isRoomLocked}
-              className="w-full flex items-center justify-center gap-2 text-sm font-black py-4 px-4 bg-primary text-white rounded-xl shadow-md shadow-primary/20 hover:bg-primary/90 active:translate-y-0 disabled:opacity-40 transition-all hover:-translate-y-0.5"
+              className="w-full flex items-center justify-center gap-2 text-sm font-black py-4 px-4 bg-primary text-white rounded-xl shadow-md shadow-primary/20 hover:bg-primary/90 active:translate-y-0 disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:-translate-y-0.5 disabled:hover:translate-y-0"
             >
               {isRoomLocked ? <Lock size={18} /> : <Camera size={18} />}
               Scan Request QR
             </button>
-            <button
-              onClick={(e) => { e.currentTarget.blur(); setManualModal(true); setWalkInConflicts([]); }}
-              disabled={isRoomLocked}
-              className="w-full flex items-center justify-center gap-2 text-sm font-black py-3 px-4 bg-white border-2 border-amber-400 text-amber-600 rounded-xl hover:bg-amber-50 disabled:opacity-40 transition-all hover:-translate-y-0.5"
-            >
-              <Zap size={16} /> Walk-in / Direct Issue
-            </button>
+            
+            {/* ⚡ FIX: Walk-In button dynamically disables when a future date is selected */}
+            {(() => {
+              const todayStr = getPHTDateStringFromDate(getPHTDateObj());
+              const isNotToday = selectedDate && selectedDate !== todayStr;
+              const walkInDisabled = isRoomLocked || isNotToday;
+
+              return (
+                <button
+                  onClick={(e) => { e.currentTarget.blur(); setManualModal(true); setWalkInConflicts([]); }}
+                  disabled={walkInDisabled}
+                  title={isNotToday ? "Clear the date filter or select today to process a Walk-in." : ""}
+                  className={`w-full flex items-center justify-center gap-2 text-sm font-black py-3 px-4 rounded-xl transition-all ${
+                    walkInDisabled
+                      ? 'bg-gray-100 border-2 border-gray-200 text-gray-400 cursor-not-allowed'
+                      : 'bg-white border-2 border-amber-400 text-amber-600 hover:bg-amber-50 hover:-translate-y-0.5'
+                  }`}
+                >
+                  {isNotToday ? <Lock size={16} /> : <Zap size={16} />} 
+                  {isNotToday ? "Walk-in (Today Only)" : "Walk-in / Direct Issue"}
+                </button>
+              );
+            })()}
           </div>
 
           <div className="flex-1 overflow-y-auto bg-gray-50/30 custom-scrollbar">
