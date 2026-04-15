@@ -485,6 +485,8 @@ export default function AdminRequests() {
   const [selectedReq,    setSelectedReq]    = useState(null);
   const [adjustedItems,  setAdjustedItems]  = useState([]);
   const [itemSearch,     setItemSearch]     = useState('');
+  
+  // Separate states for the Issue Modal (pre-approved requests)
   const [issueDate,      setIssueDate]      = useState('');
   const [issueTime,      setIssueTime]      = useState('');
   const [timeToOpen,     setTimeToOpen]     = useState(null); 
@@ -492,6 +494,7 @@ export default function AdminRequests() {
 
   const [approveReq, setApproveReq] = useState(null);
 
+  // Dedicated state for Walk-In modal
   const [manualForm,      setManualForm]      = useState({
     studentId: '', purpose: 'Walk-in', search: '',
     retDate: getPHTDateStringFromDate(getPHTDateObj()), 
@@ -636,7 +639,6 @@ export default function AdminRequests() {
 
   useEffect(() => { load(); }, [load]);
 
-  // ⚡ FIX: Added 100ms delay to disconnect to prevent React Strict Mode console errors
   useEffect(() => {
     const socket = io(SOCKET_URL);
 
@@ -1874,54 +1876,25 @@ export default function AdminRequests() {
             </div>
           )}
 
-          <div className="bg-white border border-black/10 p-4 rounded-xl space-y-3 shadow-sm">
-            <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5">
-              <Timer size={12} /> Expected Return Deadline (Today Only)
-            </h3>
-            <div className="flex gap-2 flex-wrap">
+          <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl shadow-inner">
+            <h3 className="text-xs font-black text-primary uppercase tracking-widest mb-3 flex items-center gap-1.5"><Timer size={14} /> Step 1: Set Return Deadline</h3>
+            <div className="flex gap-2 flex-wrap mb-3">
               {[
-                { 
-                  label: '+1 Hour',          
-                  action: () => { 
-                    const d = getPHTDateObj(); 
-                    d.setHours(d.getHours() + 1);
-                    const todayStr = getPHTDateStringFromDate(getPHTDateObj());
-                    // ⚡ FIX: Prevent +1 hour from pushing into tomorrow (e.g. at 11:30 PM)
-                    if (getPHTDateStringFromDate(d) !== todayStr) {
-                      setManualForm(f => ({ ...f, retDate: todayStr, retTime: '23:59' }));
-                    } else {
-                      setManualForm(f => ({ ...f, retDate: todayStr, retTime: getPHTTimeStringFromDate(d) })); 
-                    }
-                  } 
-                },
-                { 
-                  label: 'End of Day (5 PM)', 
-                  action: () => { 
-                    setManualForm(f => ({ ...f, retDate: getPHTDateStringFromDate(getPHTDateObj()), retTime: '17:00' })); 
-                  } 
-                },
-                // ⚡ FIX: Removed "Tomorrow 8 AM" button. Walk-ins are same-day only.
+                { label: '+1 Hour',          action: () => { const d = getPHTDateObj(); d.setHours(d.getHours() + 1); setIssueDate(getPHTDateStringFromDate(d)); setIssueTime(getPHTTimeStringFromDate(d)); } },
+                { label: 'End of Day (5 PM)', action: () => { setIssueDate(getPHTDateStringFromDate(getPHTDateObj())); setIssueTime('17:00'); } },
+                { label: 'Tomorrow 8 AM',    action: () => { const d = getPHTDateObj(); d.setDate(d.getDate() + 1); setIssueDate(getPHTDateStringFromDate(d)); setIssueTime('08:00'); } },
               ].map(({ label, action }) => (
                 <button key={label} onClick={action} className="text-[10px] font-bold bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 rounded-lg transition-colors border border-primary/20">{label}</button>
               ))}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="manual-date">Date</label>
-                <input 
-                  id="manual-date" 
-                  type="date" 
-                  value={manualForm.retDate} 
-                  min={getPHTDateStringFromDate(getPHTDateObj())}
-                  max={getPHTDateStringFromDate(getPHTDateObj())}
-                  onChange={e => setManualForm(f => ({ ...f, retDate: e.target.value }))} 
-                  disabled
-                  className="neu-input w-full text-sm py-2 bg-gray-100 text-gray-500 cursor-not-allowed opacity-70" 
-                />
+                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="issue-date">Date</label>
+                <input id="issue-date" type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} className="neu-input w-full text-sm py-2" />
               </div>
               <div>
-                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="manual-time">Time</label>
-                <input id="manual-time" type="time" value={manualForm.retTime} onChange={e => setManualForm(f => ({ ...f, retTime: e.target.value }))} className="neu-input w-full text-sm py-2" />
+                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="issue-time">Time</label>
+                <input id="issue-time" type="time" value={issueTime} onChange={e => setIssueTime(e.target.value)} className="neu-input w-full text-sm py-2" />
               </div>
             </div>
           </div>
@@ -2111,12 +2084,30 @@ export default function AdminRequests() {
           </div>
 
           <div className="bg-white border border-black/10 p-4 rounded-xl space-y-3 shadow-sm">
-            <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5"><Timer size={12} /> Expected Return Deadline</h3>
+            <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5">
+              <Timer size={12} /> Expected Return Deadline (Today Only)
+            </h3>
             <div className="flex gap-2 flex-wrap">
               {[
-                { label: '+1 Hour',          action: () => { const d = getPHTDateObj(); d.setHours(d.getHours() + 1); setManualForm(f => ({ ...f, retDate: getPHTDateStringFromDate(d), retTime: getPHTTimeStringFromDate(d) })); } },
-                { label: 'End of Day (5 PM)', action: () => { setManualForm(f => ({ ...f, retDate: getPHTDateStringFromDate(getPHTDateObj()), retTime: '17:00' })); } },
-                { label: 'Tomorrow 8 AM',    action: () => { const d = getPHTDateObj(); d.setDate(d.getDate() + 1); setManualForm(f => ({ ...f, retDate: getPHTDateStringFromDate(d), retTime: '08:00' })); } },
+                { 
+                  label: '+1 Hour',          
+                  action: () => { 
+                    const d = getPHTDateObj(); 
+                    d.setHours(d.getHours() + 1);
+                    const todayStr = getPHTDateStringFromDate(getPHTDateObj());
+                    if (getPHTDateStringFromDate(d) !== todayStr) {
+                      setManualForm(f => ({ ...f, retDate: todayStr, retTime: '23:59' }));
+                    } else {
+                      setManualForm(f => ({ ...f, retDate: todayStr, retTime: getPHTTimeStringFromDate(d) })); 
+                    }
+                  } 
+                },
+                { 
+                  label: 'End of Day (5 PM)', 
+                  action: () => { 
+                    setManualForm(f => ({ ...f, retDate: getPHTDateStringFromDate(getPHTDateObj()), retTime: '17:00' })); 
+                  } 
+                }
               ].map(({ label, action }) => (
                 <button key={label} onClick={action} className="text-[10px] font-bold bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 rounded-lg transition-colors border border-primary/20">{label}</button>
               ))}
@@ -2124,7 +2115,16 @@ export default function AdminRequests() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="manual-date">Date</label>
-                <input id="manual-date" type="date" value={manualForm.retDate} onChange={e => setManualForm(f => ({ ...f, retDate: e.target.value }))} className="neu-input w-full text-sm py-2" />
+                <input 
+                  id="manual-date" 
+                  type="date" 
+                  value={manualForm.retDate} 
+                  min={getPHTDateStringFromDate(getPHTDateObj())}
+                  max={getPHTDateStringFromDate(getPHTDateObj())}
+                  onChange={e => setManualForm(f => ({ ...f, retDate: e.target.value }))} 
+                  disabled
+                  className="neu-input w-full text-sm py-2 bg-gray-100 text-gray-500 cursor-not-allowed opacity-70" 
+                />
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="manual-time">Time</label>
