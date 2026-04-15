@@ -1242,12 +1242,22 @@ export default function AdminRequests() {
   }, [user?.room_id]);
 
   const processWalkIn = useCallback(async (skipConflicts = false) => {
+    const todayStr = getPHTDateStringFromDate(getPHTDateObj());
+
     if (!manualForm.retDate || !manualForm.retTime) {
       toast.error('Please set a return deadline.'); return;
     }
 
+    // ⚡ FIX: Strict Same-Day Enforcement
+    if (manualForm.retDate !== todayStr) {
+      toast.error('Walk-in transactions are strictly same-day returns.');
+      setManualForm(f => ({ ...f, retDate: todayStr })); // Auto-correct the UI
+      return;
+    }
+
     const retDeadlinePHT  = `${manualForm.retDate}T${manualForm.retTime}:00+08:00`;
     const retDeadlineDate = new Date(retDeadlinePHT);
+    
     if (retDeadlineDate <= new Date()) {
       toast.error('Return deadline must be in the future.'); return;
     }
@@ -1864,25 +1874,54 @@ export default function AdminRequests() {
             </div>
           )}
 
-          <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl shadow-inner">
-            <h3 className="text-xs font-black text-primary uppercase tracking-widest mb-3 flex items-center gap-1.5"><Timer size={14} /> Step 1: Set Return Deadline</h3>
-            <div className="flex gap-2 mb-3 flex-wrap">
+          <div className="bg-white border border-black/10 p-4 rounded-xl space-y-3 shadow-sm">
+            <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5">
+              <Timer size={12} /> Expected Return Deadline (Today Only)
+            </h3>
+            <div className="flex gap-2 flex-wrap">
               {[
-                { label: '+1 Hour',          action: () => { const d = getPHTDateObj(); d.setHours(d.getHours() + 1); setIssueDate(getPHTDateStringFromDate(d)); setIssueTime(getPHTTimeStringFromDate(d)); } },
-                { label: 'End of Day (5 PM)', action: () => { setIssueDate(getPHTDateStringFromDate(getPHTDateObj())); setIssueTime('17:00'); } },
-                { label: 'Tomorrow 8 AM',    action: () => { const d = getPHTDateObj(); d.setDate(d.getDate() + 1); setIssueDate(getPHTDateStringFromDate(d)); setIssueTime('08:00'); } },
+                { 
+                  label: '+1 Hour',          
+                  action: () => { 
+                    const d = getPHTDateObj(); 
+                    d.setHours(d.getHours() + 1);
+                    const todayStr = getPHTDateStringFromDate(getPHTDateObj());
+                    // ⚡ FIX: Prevent +1 hour from pushing into tomorrow (e.g. at 11:30 PM)
+                    if (getPHTDateStringFromDate(d) !== todayStr) {
+                      setManualForm(f => ({ ...f, retDate: todayStr, retTime: '23:59' }));
+                    } else {
+                      setManualForm(f => ({ ...f, retDate: todayStr, retTime: getPHTTimeStringFromDate(d) })); 
+                    }
+                  } 
+                },
+                { 
+                  label: 'End of Day (5 PM)', 
+                  action: () => { 
+                    setManualForm(f => ({ ...f, retDate: getPHTDateStringFromDate(getPHTDateObj()), retTime: '17:00' })); 
+                  } 
+                },
+                // ⚡ FIX: Removed "Tomorrow 8 AM" button. Walk-ins are same-day only.
               ].map(({ label, action }) => (
                 <button key={label} onClick={action} className="text-[10px] font-bold bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 rounded-lg transition-colors border border-primary/20">{label}</button>
               ))}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="issue-date">Date</label>
-                <input id="issue-date" type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} className="neu-input w-full text-sm py-2" />
+                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="manual-date">Date</label>
+                <input 
+                  id="manual-date" 
+                  type="date" 
+                  value={manualForm.retDate} 
+                  min={getPHTDateStringFromDate(getPHTDateObj())}
+                  max={getPHTDateStringFromDate(getPHTDateObj())}
+                  onChange={e => setManualForm(f => ({ ...f, retDate: e.target.value }))} 
+                  disabled
+                  className="neu-input w-full text-sm py-2 bg-gray-100 text-gray-500 cursor-not-allowed opacity-70" 
+                />
               </div>
               <div>
-                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="issue-time">Time</label>
-                <input id="issue-time" type="time" value={issueTime} onChange={e => setIssueTime(e.target.value)} className="neu-input w-full text-sm py-2" />
+                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1" htmlFor="manual-time">Time</label>
+                <input id="manual-time" type="time" value={manualForm.retTime} onChange={e => setManualForm(f => ({ ...f, retTime: e.target.value }))} className="neu-input w-full text-sm py-2" />
               </div>
             </div>
           </div>
