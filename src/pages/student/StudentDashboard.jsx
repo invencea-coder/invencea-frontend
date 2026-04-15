@@ -32,6 +32,7 @@ const getStatusBadge = (status) => {
     case 'REJECTED':
     case 'CANCELLED':          
     case 'EXPIRED':
+    case 'VOIDED':
     case 'EXPIRED (VOID)':     return 'bg-red-100 text-red-700 border-red-200';
     default:                   return 'bg-gray-100 text-gray-600 border-gray-200';
   }
@@ -284,10 +285,10 @@ export default function StudentDashboard() {
                         </p>
                       )}
                       {it.item_status && (
-                        <span className={`text-[9px] font-bold uppercase mt-1.5 inline-block px-1.5 py-0.5 rounded ${['EXPIRED', 'REJECTED', 'CANCELLED'].includes(it.item_status) ? 'bg-red-100 text-red-600' : it.item_status === 'RETURNED' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
-                          {it.item_status === 'EXPIRED' ? 'EXPIRED (VOID)' : it.item_status}
-                        </span>
-                      )}
+  <span className={`text-[9px] font-bold uppercase mt-1.5 inline-block px-1.5 py-0.5 rounded ${['EXPIRED', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(it.item_status) ? 'bg-red-100 text-red-600' : it.item_status === 'RETURNED' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+    {it.item_status}
+  </span>
+)}
                     </div>
                     <span className="text-xs font-black text-primary bg-primary/10 px-2 py-0.5 rounded-md shrink-0 ml-2">
                       ×{it.qty_requested || it.quantity}

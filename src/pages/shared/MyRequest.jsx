@@ -1,9 +1,10 @@
 // src/pages/shared/MyRequests.jsx
-import React, { useState, useEffect, useMemo } from 'react';
-import { Package, Clock, CheckCircle2, FileText, ChevronRight, Loader2, X } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Package, Clock, CheckCircle2, FileText, ChevronRight, Loader2, X, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../hooks/useAuth';
 import { listRequests } from '../../api/requestAPI';
+import api from '../../api/axiosClient.js';
 import { fmtDateTime } from '../../utils/date';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -18,6 +19,7 @@ const StatusBadge = ({ status }) => {
     'RETURNED':           'bg-emerald-50 text-emerald-800 border-emerald-200',
     'REJECTED':           'bg-red-50 text-red-800 border-red-200',
     'CANCELLED':          'bg-red-50 text-red-800 border-red-200',
+    'VOIDED':             'bg-gray-100 text-gray-600 border-gray-300',
     'EXPIRED':            'bg-gray-100 text-gray-600 border-gray-300',
     'EXPIRED (VOID)':     'bg-gray-100 text-gray-600 border-gray-300',
   };
@@ -29,10 +31,11 @@ export default function MyRequests() {
   const { user } = useAuth();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [cancelling, setCancelling] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [activeTab, setActiveTab] = useState('active');
 
-  useEffect(() => {
+  const loadRequests = useCallback(() => {
     if (user?.id) {
       listRequests({ user_id: user.id })
         .then(r => setRequests(r.data?.data ?? r.data ?? []))
@@ -40,6 +43,25 @@ export default function MyRequests() {
         .finally(() => setLoading(false));
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    loadRequests();
+  }, [loadRequests]);
+
+  const handleCancelRequest = async (id) => {
+    if (!window.confirm("Are you sure you want to cancel this request?")) return;
+    setCancelling(true);
+    try {
+      await api.put(`/requests/${id}/cancel`);
+      toast.success("Request cancelled successfully.");
+      setSelectedRequest(null);
+      loadRequests();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to cancel request.");
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const activeRequests = useMemo(() => {
     return requests.filter(r => 
@@ -49,7 +71,7 @@ export default function MyRequests() {
 
   const historyRequests = useMemo(() => {
     return requests.filter(r => 
-      ['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'EXPIRED (VOID)'].includes(r.status?.toUpperCase())
+      ['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'EXPIRED (VOID)', 'VOIDED'].includes(r.status?.toUpperCase())
     );
   }, [requests]);
 
@@ -57,8 +79,6 @@ export default function MyRequests() {
 
   return (
     <div className="min-h-[calc(100vh-4rem)] relative bg-slate-50 dark:bg-darkSurface p-4 md:p-8 overflow-x-hidden z-0">
-      
-      {/* ⚡ PREMIUM GLASSMORPHISM BACKGROUND BLOBS ⚡ */}
       <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden">
         <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px]" />
         <div className="absolute top-[40%] -right-[10%] w-[40%] h-[40%] rounded-full bg-blue-400/10 blur-[100px]" />
@@ -66,7 +86,6 @@ export default function MyRequests() {
       </div>
 
       <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in zoom-in-95 duration-500 relative z-10">
-        
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-black text-gray-800 tracking-tight mb-1">Request History</h1>
@@ -75,18 +94,8 @@ export default function MyRequests() {
         </div>
 
         <div className="flex gap-6 border-b border-black/10 px-2">
-          <button 
-            onClick={() => setActiveTab('active')} 
-            className={`pb-3 text-sm font-black tracking-wide transition-all ${activeTab === 'active' ? 'text-primary border-b-2 border-primary' : 'text-gray-400 hover:text-gray-700'}`}
-          >
-            Active Requests
-          </button>
-          <button 
-            onClick={() => setActiveTab('history')} 
-            className={`pb-3 text-sm font-black tracking-wide transition-all ${activeTab === 'history' ? 'text-primary border-b-2 border-primary' : 'text-gray-400 hover:text-gray-700'}`}
-          >
-            History
-          </button>
+          <button onClick={() => setActiveTab('active')} className={`pb-3 text-sm font-black tracking-wide transition-all ${activeTab === 'active' ? 'text-primary border-b-2 border-primary' : 'text-gray-400 hover:text-gray-700'}`}>Active Requests</button>
+          <button onClick={() => setActiveTab('history')} className={`pb-3 text-sm font-black tracking-wide transition-all ${activeTab === 'history' ? 'text-primary border-b-2 border-primary' : 'text-gray-400 hover:text-gray-700'}`}>History</button>
         </div>
 
         <div className="bg-white/70 backdrop-blur-xl rounded-3xl shadow-sm border border-white/50 overflow-hidden">
@@ -97,19 +106,13 @@ export default function MyRequests() {
               <FileText size={56} className="mb-4 text-gray-300" />
               <p className="text-lg font-black text-gray-700 mb-1">No {activeTab === 'active' ? 'Active' : 'Past'} Requests</p>
               <p className="text-sm font-medium text-gray-500">
-                {activeTab === 'active' 
-                  ? "You don't have any active or pending requests right now."
-                  : "You don't have any returned, expired, or cancelled requests."}
+                {activeTab === 'active' ? "You don't have any active or pending requests right now." : "You don't have any returned, expired, or cancelled requests."}
               </p>
             </div>
           ) : (
             <div className="divide-y divide-black/5">
               {displayedRequests.map(req => (
-                <div
-                  key={req.id}
-                  onClick={() => setSelectedRequest(req)}
-                  className="p-5 hover:bg-white/60 transition-colors cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-4"
-                >
+                <div key={req.id} onClick={() => setSelectedRequest(req)} className="p-5 hover:bg-white/60 transition-colors cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="flex items-start gap-4">
                     <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner flex-shrink-0 bg-white border border-black/5 text-gray-500 group-hover:scale-105 group-hover:text-primary transition-all">
                       {req.status === 'RETURNED' ? <CheckCircle2 size={24} className="text-emerald-500" /> : <Package size={24} />}
@@ -120,12 +123,9 @@ export default function MyRequests() {
                         <StatusBadge status={req.status} />
                       </div>
                       <p className="font-black text-gray-800 text-lg group-hover:text-primary transition-colors">{req.purpose || 'General Request'}</p>
-                      <p className="text-xs font-medium text-gray-500 mt-1 flex items-center gap-1.5">
-                        <Clock size={12} className="text-gray-400" /> {fmtDateTime(req.requested_time || req.created_at)}
-                      </p>
+                      <p className="text-xs font-medium text-gray-500 mt-1 flex items-center gap-1.5"><Clock size={12} className="text-gray-400" /> {fmtDateTime(req.requested_time || req.created_at)}</p>
                     </div>
                   </div>
-                  
                   <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto mt-2 md:mt-0 pl-18 md:pl-0">
                     <div className="text-left md:text-right">
                       <p className="text-[10px] text-gray-400 uppercase tracking-widest font-black mb-0.5">Items</p>
@@ -141,34 +141,25 @@ export default function MyRequests() {
           )}
         </div>
 
-        {/* --- Request Details Modal --- */}
         {selectedRequest && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white/90 backdrop-blur-2xl w-full max-w-lg relative overflow-hidden rounded-3xl border border-white/50 shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
-              
               <div className="bg-white/50 p-6 border-b border-black/5 flex justify-between items-center flex-shrink-0">
                 <div>
                   <h3 className="font-black text-gray-800 text-xl tracking-tight">#{selectedRequest.id}</h3>
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-0.5">{selectedRequest.purpose || 'General Request'}</p>
                 </div>
-                <button onClick={() => setSelectedRequest(null)} className="p-2 bg-white rounded-full text-gray-400 hover:text-red-500 shadow-sm border border-black/5 transition-all hover:scale-110">
-                  <X size={18} />
-                </button>
+                <button onClick={() => setSelectedRequest(null)} className="p-2 bg-white rounded-full text-gray-400 hover:text-red-500 shadow-sm border border-black/5 transition-all hover:scale-110"><X size={18} /></button>
               </div>
 
               <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
-                
                 <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-black/5 shadow-sm">
-                  <span className="text-gray-500 font-black text-[10px] uppercase tracking-widest flex items-center gap-2">
-                    <Clock size={14}/> Status
-                  </span>
+                  <span className="text-gray-500 font-black text-[10px] uppercase tracking-widest flex items-center gap-2"><Clock size={14}/> Status</span>
                   <StatusBadge status={selectedRequest.status} />
                 </div>
 
                 <div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                    <Package size={14} /> Requested Items
-                  </p>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5"><Package size={14} /> Requested Items</p>
                   <div className="space-y-2">
                     {selectedRequest.items?.map((item, idx) => {
                       const isReturned = item.status === 'RETURNED' || item.item_status === 'RETURNED';
@@ -181,17 +172,11 @@ export default function MyRequests() {
                               {isReturned ? <CheckCircle2 size={18} /> : <Package size={18} />}
                             </div>
                             <div className="min-w-0 pr-2">
-                              <span className={`font-black text-sm truncate block ${isReturned ? 'text-emerald-900 line-through opacity-60' : 'text-gray-800'}`}>
-                                {item.item_name}
-                              </span>
-                              {displayAssignee && displayAssignee !== 'Requester' && (
-                                <p className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">Assigned: {displayAssignee}</p>
-                              )}
+                              <span className={`font-black text-sm truncate block ${isReturned ? 'text-emerald-900 line-through opacity-60' : 'text-gray-800'}`}>{item.item_name}</span>
+                              {displayAssignee && displayAssignee !== 'Requester' && <p className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">Assigned: {displayAssignee}</p>}
                             </div>
                           </div>
-                          <span className={`px-2.5 py-1 rounded-lg text-xs font-black border flex-shrink-0 ${isReturned ? 'bg-emerald-100 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-black/5 text-gray-600'}`}>
-                            ×{item.quantity || item.qty_requested || 1}
-                          </span>
+                          <span className={`px-2.5 py-1 rounded-lg text-xs font-black border flex-shrink-0 ${isReturned ? 'bg-emerald-100 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-black/5 text-gray-600'}`}>×{item.quantity || item.qty_requested || 1}</span>
                         </div>
                       );
                     })}
@@ -200,22 +185,26 @@ export default function MyRequests() {
 
                 {['PENDING', 'APPROVED'].includes(selectedRequest.status?.toUpperCase()) && selectedRequest.qr_code && (
                   <div className="mt-6 flex flex-col items-center justify-center p-6 border-2 border-dashed border-black/10 rounded-3xl bg-white/50 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-primary/5 rounded-full blur-3xl pointer-events-none group-hover:bg-primary/10 transition-colors" />
                     <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 relative z-10">Your Request QR Code</p>
                     <div className="p-3 bg-white rounded-2xl shadow-sm border border-black/5 relative z-10 group-hover:scale-105 transition-transform duration-300">
                       <QRCodeSVG value={selectedRequest.qr_code} size={160} level="M" />
                     </div>
-                    <p className="text-[11px] font-medium text-gray-500 mt-4 text-center relative z-10 max-w-[200px] leading-relaxed">
-                      Present this QR code at the counter to claim your items.
-                    </p>
+                    <p className="text-[11px] font-medium text-gray-500 mt-4 text-center relative z-10 max-w-[200px] leading-relaxed">Present this QR code at the counter to claim your items.</p>
                   </div>
                 )}
               </div>
 
-              <div className="p-4 border-t border-black/5 flex-shrink-0 bg-white/50">
-                <button onClick={() => setSelectedRequest(null)} className="w-full bg-primary hover:bg-primary/90 text-white py-4 rounded-2xl font-black tracking-wide shadow-md shadow-primary/20 transition-all">
-                  Close Details
-                </button>
+              <div className="p-4 border-t border-black/5 flex-shrink-0 bg-white/50 flex gap-3">
+                {['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(selectedRequest.status?.toUpperCase()) && (
+                  <button
+                    onClick={() => handleCancelRequest(selectedRequest.id)}
+                    disabled={cancelling}
+                    className="flex-1 py-4 rounded-2xl font-black tracking-wide transition-all border-2 border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {cancelling ? <Loader2 size={18} className="animate-spin" /> : <><XCircle size={18} /> Cancel</>}
+                  </button>
+                )}
+                <button onClick={() => setSelectedRequest(null)} className="flex-1 bg-primary hover:bg-primary/90 text-white py-4 rounded-2xl font-black tracking-wide shadow-md shadow-primary/20 transition-all">Close</button>
               </div>
 
             </div>

@@ -136,7 +136,7 @@ const isExpiredRow = (r) => {
 };
 
 const getRequestUrgency = (req) => {
-  if (['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED'].includes(req.status)) return null;
+  if (['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'VOIDED'].includes(req.status)) return null;
   const now = Date.now();
 
   if (['PENDING', 'APPROVED', 'PENDING APPROVAL'].includes(req.status)) {
@@ -188,6 +188,7 @@ const STATUS_TEXT_CLS = {
   'PENDING APPROVAL': 'text-amber-800',
   overdue:            'text-red-800',
   'PARTIALLY RETURNED': 'text-orange-800',
+  VOIDED:             'text-red-800', // ⚡ Added
 };
 
 const ALL_TABS = ['PENDING', 'APPROVED', 'ISSUED', 'OVERDUE', 'ARCHIVED'];
@@ -729,7 +730,7 @@ export default function AdminRequests() {
       APPROVED: requests.filter(r => r.status === 'APPROVED' && !r.isExpired && inDate(r)).length,
       ISSUED:   requests.filter(r => ['ISSUED', 'PARTIALLY RETURNED'].includes(r.status) && inDate(r)).length,
       OVERDUE:  requests.filter(r => ['ISSUED', 'PARTIALLY RETURNED'].includes(r.status) && getRequestUrgency(r) === 'overdue' && inDate(r)).length,
-      ARCHIVED: requests.filter(r => (['REJECTED', 'RETURNED', 'CANCELLED'].includes(r.status) || r.isExpired) && inDate(r)).length,
+      ARCHIVED: requests.filter(r => (['REJECTED', 'RETURNED', 'CANCELLED', 'VOIDED'].includes(r.status) || r.isExpired) && inDate(r)).length,
     };
   }, [requests, selectedDate]);
 
@@ -747,7 +748,7 @@ export default function AdminRequests() {
         case 'APPROVED': if (!(r.status === 'APPROVED' && !r.isExpired)) return false; break;
         case 'ISSUED':   if (!['ISSUED', 'PARTIALLY RETURNED'].includes(r.status)) return false; break;
         case 'OVERDUE':  if (!(['ISSUED', 'PARTIALLY RETURNED'].includes(r.status) && getRequestUrgency(r) === 'overdue')) return false; break;
-        case 'ARCHIVED': if (!(['REJECTED', 'RETURNED', 'CANCELLED'].includes(r.status) || r.isExpired)) return false; break;
+        case 'ARCHIVED': if (!(['REJECTED', 'RETURNED', 'CANCELLED', 'VOIDED'].includes(r.status) || r.isExpired)) return false; break;
         default: break;
       }
 
@@ -1676,9 +1677,9 @@ export default function AdminRequests() {
                           </div>
                           <div className="flex items-center gap-2 text-xs text-muted flex-wrap">
                             <span className={`font-black ${r.isExpired ? 'text-gray-500' : STATUS_TEXT_CLS[r.status] || 'text-gray-500'}`}>
-                              {r.isExpired && !['REJECTED', 'CANCELLED', 'RETURNED'].includes(r.status)
-                                ? 'EXPIRED (VOID)' : r.status}
-                            </span>
+  {r.isExpired && !['REJECTED', 'CANCELLED', 'RETURNED', 'VOIDED'].includes(r.status)
+    ? 'VOIDED' : r.status}
+</span>
                             <span>•</span>
                             <span>{r.items?.length ?? 0} items</span>
                             {timeRange ? (

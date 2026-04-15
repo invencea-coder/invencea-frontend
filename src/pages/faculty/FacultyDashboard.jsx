@@ -32,6 +32,7 @@ const statusColors = {
   'RETURNED':           'bg-gray-100 text-gray-600 border border-gray-200',
   'REJECTED':           'bg-red-50 text-red-700 border border-red-200',
   'CANCELLED':          'bg-red-50 text-red-700 border border-red-200',
+  'VOIDED':             'bg-red-50 text-red-700 border border-red-200',
   'EXPIRED':            'bg-orange-50 text-orange-700 border border-orange-200',
 };
 
