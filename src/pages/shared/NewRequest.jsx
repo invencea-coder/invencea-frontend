@@ -1225,6 +1225,7 @@ export default function NewRequest() {
 
   const cartTotalItems = cart.reduce((s, c) => s + c.req_qty, 0);
 
+  const pickupTimeDisplay = pickedWindowTs ? fmtTime(new Date(pickedWindowTs.startTs)) : null;
   const returnTimeDisplay = pickedWindowTs ? fmtTime(new Date(pickedWindowTs.endTs)) : null;
   const returnDateDisplay = pickedWindowTs ? fmtDateShort(new Date(pickedWindowTs.endTs).toISOString().split('T')[0]) : null;
 
@@ -1352,7 +1353,7 @@ export default function NewRequest() {
                     <Timer size={13} className={step2Done ? 'text-emerald-600 flex-shrink-0' : 'text-gray-500 flex-shrink-0'} />
                     <span className={`text-xs font-black uppercase tracking-wide truncate ${step2Done ? 'text-emerald-700' : 'text-gray-700'}`}>
                       {step2Done
-                        ? `${pickupTime} – ${returnTimeDisplay} ${bookingMode === 'multiday' ? `(${returnDateDisplay})` : ''}`
+                        ? `${pickupTimeDisplay} – ${returnTimeDisplay} ${bookingMode === 'multiday' ? `(${returnDateDisplay})` : ''}`
                         : 'Pick a timeframe'}
                     </span>
                   </div>
@@ -1764,45 +1765,6 @@ export default function NewRequest() {
 
             <div className="h-20" aria-hidden />
           </div>
-
-          {selectedDate && !calendarOpen && (
-            <div className="flex-shrink-0 bg-white border-t border-black/8 px-4 py-4 z-20 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)] pb-safe">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  {cart.length > 0 ? (
-                    <>
-                      <p className="text-sm font-black text-gray-800 leading-none">
-                        {cartTotalItems} item{cartTotalItems !== 1 ? 's' : ''} in cart
-                      </p>
-                      <p className="text-[10px] text-gray-400 mt-1 truncate">
-                        {step2Done
-                          ? `${pickupTime} – ${returnTimeDisplay} ${bookingMode === 'multiday' ? `(${returnDateDisplay})` : ''}`
-                          : 'Set a time slot first'}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-sm text-gray-400 font-medium">
-                      {step2Done ? 'Add items from the catalog' : 'Set a timeframe first'}
-                    </p>
-                  )}
-                </div>
-
-                {step2Done && (
-                  <button
-                    onClick={() =>
-                      submitRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                    }
-                    className={`flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-black transition-all flex-shrink-0
-                      ${canSubmit
-                        ? 'bg-primary text-white hover:bg-primary/90 shadow-md shadow-primary/20'
-                        : 'bg-gray-100 text-gray-500'}`}
-                  >
-                    {canSubmit ? <><CheckCircle2 size={16} /> Submit</> : 'Review ↓'}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
         </>
       )}
 
