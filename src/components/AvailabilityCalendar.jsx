@@ -55,6 +55,34 @@ function touchesDate(event, dateStr) {
   return start <= dayEnd && evEnd >= dayStart;
 }
 
+// ⚡ DYNAMIC EXPIRATION CHECKER
+const isCalendarEventExpired = (ev) => {
+  const status = String(ev.status || ev.request_status || '').toUpperCase();
+  // Active issuances are never expired
+  if (['ISSUED', 'PARTIALLY RETURNED'].includes(status)) return false;
+  
+  const now = Date.now();
+  
+  // 15 minute grace period for scheduled pickups
+  if (ev.pickup_datetime) {
+    return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
+  }
+  if (ev.scheduled_time) {
+    return now > new Date(ev.scheduled_time).getTime() + 15 * 60_000;
+  }
+  if (ev.pickup_start) {
+    const e = new Date(ev.pickup_start); 
+    e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  if (ev.created_at) {
+    const e = new Date(ev.created_at); 
+    e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  return false;
+};
+
 const S = {
   navBtn: { background: "none", border: "0.5px solid #d1d0cc", borderRadius: "6px", cursor: "pointer", fontSize: "15px", color: "#111", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center" },
 };
@@ -88,10 +116,12 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
       const res = await api.get('/requests/calendar', { params: { room_id: roomId } });
       const fetchedData = Array.isArray(res.data.data) ? res.data.data : [];
       
-      // ⚡ STRICT WHITELIST: Only keep bookings that are actively taking up space
+      // ⚡ STRICT WHITELIST AND DYNAMIC EXPIRATION FILTER
       const validEvents = fetchedData.filter(ev => {
         const status = String(ev.status || ev.request_status || '').toUpperCase();
-        return ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(status);
+        const isWhitelisted = ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(status);
+        
+        return isWhitelisted && !isCalendarEventExpired(ev);
       });
 
       setEvents(validEvents);
