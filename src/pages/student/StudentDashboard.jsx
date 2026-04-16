@@ -38,6 +38,22 @@ const getStatusBadge = (status) => {
   }
 };
 
+// ⚡ DYNAMIC EXPIRATION CHECKER
+const isRequestExpired = (ev) => {
+  const now = Date.now();
+  if (ev.pickup_datetime) return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
+  if (ev.scheduled_time)  return now > new Date(ev.scheduled_time).getTime() + 15 * 60_000;
+  if (ev.pickup_start) {
+    const e = new Date(ev.pickup_start); e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  if (ev.created_at) {
+    const e = new Date(ev.created_at); e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  return false;
+};
+
 export default function StudentDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -69,7 +85,11 @@ export default function StudentDashboard() {
     requests.forEach(req => {
       let s = req.status?.toUpperCase();
       
-      // Auto mapping EXPIRED to EXPIRED (VOID) for clarity
+      // ⚡ INTERCEPT EXPIRED STATUS
+      if (['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(s) && isRequestExpired(req)) {
+        s = 'VOIDED'; // Force UI to consider it voided even if DB says approved
+      }
+
       if (s === 'EXPIRED') s = 'EXPIRED (VOID)';
 
       const isOverdue = (s === 'ISSUED' || s === 'PARTIALLY RETURNED') && req.return_deadline && new Date(req.return_deadline) < now;
@@ -116,7 +136,6 @@ export default function StudentDashboard() {
     }
   };
 
-  // ⚡ FIX: Add direct cancellation for student side
   const handleCancelRequest = async (id) => {
     if (!window.confirm("Are you sure you want to cancel this request?")) return;
     setCancelling(true);
@@ -285,10 +304,10 @@ export default function StudentDashboard() {
                         </p>
                       )}
                       {it.item_status && (
-  <span className={`text-[9px] font-bold uppercase mt-1.5 inline-block px-1.5 py-0.5 rounded ${['EXPIRED', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(it.item_status) ? 'bg-red-100 text-red-600' : it.item_status === 'RETURNED' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
-    {it.item_status}
-  </span>
-)}
+                        <span className={`text-[9px] font-bold uppercase mt-1.5 inline-block px-1.5 py-0.5 rounded ${['EXPIRED', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(it.item_status) ? 'bg-red-100 text-red-600' : it.item_status === 'RETURNED' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                          {it.item_status}
+                        </span>
+                      )}
                     </div>
                     <span className="text-xs font-black text-primary bg-primary/10 px-2 py-0.5 rounded-md shrink-0 ml-2">
                       ×{it.qty_requested || it.quantity}
@@ -317,41 +336,6 @@ export default function StudentDashboard() {
           </div>
         )}
       </NeumorphModal>
-
-      <NeumorphModal open={isPinModalOpen} onClose={() => setIsPinModalOpen(false)} title="Change Security PIN">
-        <form onSubmit={handlePinSubmit} className="space-y-4 p-2 mt-2">
-          <NeumorphInput
-            label="Current PIN"
-            type="password"
-            inputMode="numeric"
-            placeholder="••••"
-            value={pinForm.current_pin}
-            onChange={e => handlePinChangeInput('current_pin', e.target.value)}
-            autoFocus
-          />
-          <NeumorphInput
-            label="New 4-Digit PIN"
-            type="password"
-            inputMode="numeric"
-            placeholder="••••"
-            value={pinForm.new_pin}
-            onChange={e => handlePinChangeInput('new_pin', e.target.value)}
-          />
-          <NeumorphInput
-            label="Confirm New PIN"
-            type="password"
-            inputMode="numeric"
-            placeholder="••••"
-            value={pinForm.confirm_pin}
-            onChange={e => handlePinChangeInput('confirm_pin', e.target.value)}
-          />
-          <div className="flex justify-end gap-3 pt-4 border-t border-black/5 mt-4">
-            <NeumorphButton variant="outline" type="button" onClick={() => setIsPinModalOpen(false)} className="flex-1">Cancel</NeumorphButton>
-            <NeumorphButton variant="primary" type="submit" loading={changingPin} className="flex-1">Update PIN</NeumorphButton>
-          </div>
-        </form>
-      </NeumorphModal>
-
     </div>
   );
 }

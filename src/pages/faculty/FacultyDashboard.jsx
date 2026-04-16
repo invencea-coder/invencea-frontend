@@ -1,5 +1,5 @@
 // src/pages/faculty/FacultyDashboard.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PlusCircle, FileText, Clock, CalendarClock, Package, Loader2 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth.js';
@@ -36,6 +36,22 @@ const statusColors = {
   'EXPIRED':            'bg-orange-50 text-orange-700 border border-orange-200',
 };
 
+// ⚡ DYNAMIC EXPIRATION CHECKER
+const isRequestExpired = (ev) => {
+  const now = Date.now();
+  if (ev.pickup_datetime) return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
+  if (ev.scheduled_time)  return now > new Date(ev.scheduled_time).getTime() + 15 * 60_000;
+  if (ev.pickup_start) {
+    const e = new Date(ev.pickup_start); e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  if (ev.created_at) {
+    const e = new Date(ev.created_at); e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  return false;
+};
+
 export default function FacultyDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -51,8 +67,19 @@ export default function FacultyDashboard() {
     }
   }, [user]);
 
-  const pending = requests.filter(r => ['PENDING', 'PENDING APPROVAL'].includes(r.status)).length;
-  const issued  = requests.filter(r => ['ISSUED', 'PARTIALLY RETURNED'].includes(r.status)).length;
+  const processedRequests = useMemo(() => {
+    return requests.map(r => {
+      let s = r.status?.toUpperCase() || 'UNKNOWN';
+      // ⚡ INTERCEPT EXPIRED STATUS
+      if (['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(s) && isRequestExpired(r)) {
+        s = 'VOIDED';
+      }
+      return { ...r, status: s };
+    });
+  }, [requests]);
+
+  const pending = processedRequests.filter(r => ['PENDING', 'PENDING APPROVAL'].includes(r.status)).length;
+  const issued  = processedRequests.filter(r => ['ISSUED', 'PARTIALLY RETURNED'].includes(r.status)).length;
 
   return (
     <div className="min-h-[calc(100vh-4rem)] relative bg-slate-50 dark:bg-darkSurface p-4 md:p-8 overflow-x-hidden z-0">
@@ -122,14 +149,14 @@ export default function FacultyDashboard() {
           
           {loading ? (
             <div className="flex justify-center py-10"><Loader2 size={32} className="animate-spin text-primary/50" /></div>
-          ) : requests.length === 0 ? (
+          ) : processedRequests.length === 0 ? (
             <div className="text-center py-10">
               <Package size={32} className="mx-auto text-gray-300 mb-3" />
               <p className="text-sm font-bold text-gray-500">No requests yet</p>
             </div>
           ) : (
             <div className="flex flex-col gap-3">
-              {requests.slice(0, 5).map(r => (
+              {processedRequests.slice(0, 5).map(r => (
                 <div key={r.id} className="flex items-center justify-between bg-white/50 border border-black/5 rounded-2xl p-4 transition-colors hover:border-primary/30 hover:bg-white/80">
                   <div>
                     <div className="flex items-center gap-2 mb-1">

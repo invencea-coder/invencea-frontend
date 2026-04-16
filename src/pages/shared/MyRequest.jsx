@@ -27,6 +27,22 @@ const StatusBadge = ({ status }) => {
   return <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${colorClass}`}>{s}</span>;
 };
 
+// ⚡ DYNAMIC EXPIRATION CHECKER
+const isRequestExpired = (ev) => {
+  const now = Date.now();
+  if (ev.pickup_datetime) return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
+  if (ev.scheduled_time)  return now > new Date(ev.scheduled_time).getTime() + 15 * 60_000;
+  if (ev.pickup_start) {
+    const e = new Date(ev.pickup_start); e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  if (ev.created_at) {
+    const e = new Date(ev.created_at); e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  return false;
+};
+
 export default function MyRequests() {
   const { user } = useAuth();
   const [requests, setRequests] = useState([]);
@@ -63,17 +79,28 @@ export default function MyRequests() {
     }
   };
 
-  const activeRequests = useMemo(() => {
-    return requests.filter(r => 
-      ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(r.status?.toUpperCase())
-    );
+  const processedRequests = useMemo(() => {
+    return requests.map(r => {
+      let s = r.status?.toUpperCase() || 'UNKNOWN';
+      // ⚡ INTERCEPT EXPIRED STATUS
+      if (['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(s) && isRequestExpired(r)) {
+        s = 'VOIDED';
+      }
+      return { ...r, status: s };
+    });
   }, [requests]);
 
-  const historyRequests = useMemo(() => {
-    return requests.filter(r => 
-      ['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'EXPIRED (VOID)', 'VOIDED'].includes(r.status?.toUpperCase())
+  const activeRequests = useMemo(() => {
+    return processedRequests.filter(r => 
+      ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(r.status)
     );
-  }, [requests]);
+  }, [processedRequests]);
+
+  const historyRequests = useMemo(() => {
+    return processedRequests.filter(r => 
+      ['RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'EXPIRED (VOID)', 'VOIDED'].includes(r.status)
+    );
+  }, [processedRequests]);
 
   const displayedRequests = activeTab === 'active' ? activeRequests : historyRequests;
 
