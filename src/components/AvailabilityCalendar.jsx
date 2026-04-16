@@ -83,10 +83,10 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
       const res = await api.get('/requests/calendar', { params: { room_id: roomId } });
       const fetchedData = Array.isArray(res.data.data) ? res.data.data : [];
       
-      // ⚡ THE FIX: Filter out any requests that shouldn't block the calendar
+      // ⚡ STRICT WHITELIST: Only keep bookings that are actively taking up space
       const validEvents = fetchedData.filter(ev => {
         const status = String(ev.status || ev.request_status || '').toUpperCase();
-        return !['VOID', 'VOIDED', 'CANCELLED', 'REJECTED', 'RETURNED'].includes(status);
+        return ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(status);
       });
 
       setEvents(validEvents);
