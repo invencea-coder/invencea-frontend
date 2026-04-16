@@ -4,33 +4,6 @@ import { format } from "date-fns";
 import { X, Clock, Package, ListTodo } from "lucide-react";
 import api from "../api/axiosClient";
 
-const isCalendarEventExpired = (ev) => {
-  const status = String(ev.status || ev.request_status || '').toUpperCase();
-  // Active issuances are never expired
-  if (['ISSUED', 'PARTIALLY RETURNED'].includes(status)) return false;
-  
-  const now = Date.now();
-  
-  // 15 minute grace period for scheduled pickups
-  if (ev.pickup_datetime) {
-    return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
-  }
-  if (ev.scheduled_time) {
-    return now > new Date(ev.scheduled_time).getTime() + 15 * 60_000;
-  }
-  if (ev.pickup_start) {
-    const e = new Date(ev.pickup_start); 
-    e.setHours(23, 59, 59, 999);
-    return now > e.getTime();
-  }
-  if (ev.created_at) {
-    const e = new Date(ev.created_at); 
-    e.setHours(23, 59, 59, 999);
-    return now > e.getTime();
-  }
-  return false;
-};
-
 const STATUS = {
   APPROVED:           { label: "Reserved",       dot: "#BA7517", barBg: "#FAEEDA", barBorder: "#EF9F27", barText: "#633806" },
   ISSUED:             { label: "Issued",         dot: "#185FA5", barBg: "#E6F1FB", barBorder: "#378ADD", barText: "#042C53" },
@@ -55,6 +28,11 @@ function fmtTime(date) {
 function fmtDate(date) {
   if (!date) return "—";
   try { return date.toLocaleDateString("en-US", { timeZone: "Asia/Manila", weekday: "long", month: "long", day: "numeric" }); }
+  catch { return date.toDateString(); }
+}
+function fmtDateShort(date) {
+  if (!date) return "—";
+  try { return date.toLocaleDateString("en-US", { timeZone: "Asia/Manila", weekday: "short", month: "short", day: "numeric", year: "numeric" }); }
   catch { return date.toDateString(); }
 }
 
@@ -110,13 +88,10 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
       const res = await api.get('/requests/calendar', { params: { room_id: roomId } });
       const fetchedData = Array.isArray(res.data.data) ? res.data.data : [];
       
-      // ⚡ DYNAMIC FILTER: Keep active statuses AND drop them if their 15-min grace period passed
+      // ⚡ STRICT WHITELIST: Only keep bookings that are actively taking up space
       const validEvents = fetchedData.filter(ev => {
         const status = String(ev.status || ev.request_status || '').toUpperCase();
-        const isWhitelisted = ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(status);
-        
-        // Return true ONLY if it's a valid status AND it hasn't expired yet!
-        return isWhitelisted && !isCalendarEventExpired(ev);
+        return ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(status);
       });
 
       setEvents(validEvents);
@@ -293,12 +268,22 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
                   {selEvents.sort((a,b) => (getEventRange(a).start?.getTime()||0) - (getEventRange(b).start?.getTime()||0)).map(event => {
                     const { start, end } = getEventRange(event);
                     const cfg = STATUS[event.status] || STATUS.PENDING;
+                    
+                    // Check if it spans multiple days
+                    const spansMultipleDays = start && end && start.toDateString() !== end.toDateString();
+
                     return (
                       <div key={event.id} onClick={() => setSelectedBooking(event)} className="flex items-start gap-4 group cursor-pointer">
                         
                         <div className="w-16 pt-2.5 text-right shrink-0 bg-slate-50">
                           <p className="text-xs font-bold text-gray-900">{fmtTime(start)}</p>
-                          <p className="text-[10px] font-medium text-gray-400 mt-0.5">{end ? fmtTime(end) : '—'}</p>
+                          <p className="text-[10px] font-medium text-gray-400 mt-0.5 leading-tight">
+                            {end ? (
+                              spansMultipleDays ? (
+                                <>{fmtTime(end)}<br/><span className="text-[9px] text-blue-500">{fmtDateShort(end)}</span></>
+                              ) : fmtTime(end)
+                            ) : '—'}
+                          </p>
                         </div>
                         
                         <div className="pt-3 shrink-0 bg-slate-50 py-2">
@@ -382,7 +367,7 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
                       )}
                     </div>
 
-                    {/* Time Block */}
+                    {/* ⚡ UPDATED Time Block (With Dates) */}
                     <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-4 flex items-start gap-3">
                       <div className="mt-0.5">
                         <div className="w-2 h-2 rounded-full bg-blue-500 mb-1"></div>
@@ -392,11 +377,17 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
                       <div className="flex-1 space-y-3 text-sm">
                         <div>
                           <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Start Time</p>
-                          <p className="font-semibold text-gray-900">{fmtTime(start)}</p>
+                          <p className="font-semibold text-gray-900">
+                            {fmtTime(start)} <span className="text-[11px] text-gray-500 font-medium ml-1">({fmtDateShort(start)})</span>
+                          </p>
                         </div>
                         <div>
                           <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Expected Return</p>
-                          <p className="font-semibold text-gray-900">{end ? fmtTime(end) : '—'}</p>
+                          <p className="font-semibold text-gray-900">
+                            {end ? (
+                              <>{fmtTime(end)} <span className="text-[11px] text-gray-500 font-medium ml-1">({fmtDateShort(end)})</span></>
+                            ) : '—'}
+                          </p>
                         </div>
                       </div>
                     </div>

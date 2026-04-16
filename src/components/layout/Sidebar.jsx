@@ -19,12 +19,12 @@ const navByRole = {
   faculty: [
     { label: 'Dashboard', icon: LayoutDashboard, to: '/faculty' },
     { label: 'New Request', icon: PlusCircle, to: '/faculty/new-request' },
-    { label: 'My Requests', icon: FileText, to: '/faculty/my-requests' },
+    { label: 'History', icon: FileText, to: '/faculty/my-requests' },
   ],
   student: [
     { label: 'Dashboard', icon: LayoutDashboard, to: '/student' },
     { label: 'New Request', icon: PlusCircle, to: '/student/new-request' },
-    { label: 'My Requests', icon: FileText, to: '/student/my-requests' },
+    { label: 'History', icon: FileText, to: '/student/my-requests' },
   ],
   manager: [
     { label: 'Dashboard', icon: LayoutDashboard, to: '/manager', end: true },
