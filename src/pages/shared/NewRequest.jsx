@@ -1077,35 +1077,46 @@ export default function NewRequest() {
   const canSubmit = step3Done && purpose && (purpose !== 'Other' || customPurpose.trim()) && email;
 
   // ── Cart actions ───────────────────────────────────────────────────────────
+  // ── Cart actions ───────────────────────────────────────────────────────────
   const addToCart = useCallback(
     (item) => {
       if (isRoomClosed || item._avail <= 0) return;
 
-      if (pickedWindowTs && isItemBookedAtSlot(item)) {
-        toast.error(
-          `${item.name}${item.barcode ? ` (${item.barcode})` : ''} is booked during this time frame.`,
-        );
-        return;
+      let maxForSlot = item.inventory_mode === 'unit' ? 1 : item._avail;
+
+      // Ensure we don't exceed time-slot capacities
+      if (pickedWindowTs) {
+        if (item.inventory_mode === 'unit') {
+          // Strictly block serialized units if ANY booking overlaps
+          if (isItemBookedAtSlot(item)) {
+            toast.error(`${item.name}${item.barcode ? ` (${item.barcode})` : ''} is booked during this time frame.`);
+            return;
+          }
+        } else {
+          // Calculate remaining capacity for bulk/consumable items
+          let overlappingQty = 0;
+          const bookings = getBookingsForItem(item);
+          for (const b of bookings) {
+            if (pickedWindowTs.startTs < b.endTs && pickedWindowTs.endTs > b.startTs) {
+              overlappingQty += (b.qty || 1);
+            }
+          }
+          maxForSlot = Math.max(0, item._avail - overlappingQty);
+          
+          if (maxForSlot <= 0) {
+            toast.error(`${item.name} is fully booked during this time frame.`);
+            return;
+          }
+        }
       }
 
       const key = cartKeyOf(item);
       setCart(prev => {
         const existing = prev.find(c => cartKeyOf(c) === key);
         if (existing) {
-          if (item.inventory_mode === 'unit') return prev;
+          // Cannot add more than 1 of a specific serialized unit
+          if (item.inventory_mode === 'unit') return prev; 
           
-          let maxForSlot = item._avail;
-          if (pickedWindowTs) {
-            let overlappingQty = 0;
-            const bookings = getBookingsForItem(item);
-            for (const b of bookings) {
-              if (pickedWindowTs.startTs < b.endTs && pickedWindowTs.endTs > b.startTs) {
-                overlappingQty += (b.qty || 1);
-              }
-            }
-            maxForSlot = Math.max(0, item._avail - overlappingQty);
-          }
-
           if (existing.req_qty >= maxForSlot) {
             setTimeout(() => toast.error(`Only ${maxForSlot} available during this time slot.`), 0);
             return prev;
