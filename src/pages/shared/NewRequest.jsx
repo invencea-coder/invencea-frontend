@@ -130,12 +130,12 @@ const isCalendarEventExpired = (ev) => {
     return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
   }
   if (ev.pickup_start) {
-    const e = new Date(ev.pickup_start); 
+    const e = new Date(ev.pickup_start);
     e.setHours(23, 59, 59, 999);
     return now > e.getTime();
   }
   if (ev.created_at) {
-    const e = new Date(ev.created_at); 
+    const e = new Date(ev.created_at);
     e.setHours(23, 59, 59, 999);
     return now > e.getTime();
   }
@@ -145,18 +145,22 @@ const isCalendarEventExpired = (ev) => {
 // Extractor to clamp global timestamps into visual minute ranges for a specific viewed date
 const clampToDayMins = (dateStr, tsStart, tsEnd) => {
   const dayStartTs = new Date(`${dateStr}T00:00:00+08:00`).getTime();
-  const dayEndTs = new Date(`${dateStr}T23:59:59+08:00`).getTime();
+  const dayEndTs   = new Date(`${dateStr}T23:59:59+08:00`).getTime();
 
   if (tsEnd <= dayStartTs || tsStart >= dayEndTs) return null;
 
   const cStart = Math.max(tsStart, dayStartTs);
-  const cEnd = Math.min(tsEnd, dayEndTs);
+  const cEnd   = Math.min(tsEnd,   dayEndTs);
 
   const startD = new Date(cStart);
-  const endD = new Date(cEnd);
+  const endD   = new Date(cEnd);
 
-  const stMins = parseInt(dateToPHTTime(startD)?.split(':')[0] || 0) * 60 + parseInt(dateToPHTTime(startD)?.split(':')[1] || 0);
-  const enMins = parseInt(dateToPHTTime(endD)?.split(':')[0] || 0) * 60 + parseInt(dateToPHTTime(endD)?.split(':')[1] || 0);
+  const stMins =
+    parseInt(dateToPHTTime(startD)?.split(':')[0] || 0) * 60 +
+    parseInt(dateToPHTTime(startD)?.split(':')[1] || 0);
+  const enMins =
+    parseInt(dateToPHTTime(endD)?.split(':')[0] || 0) * 60 +
+    parseInt(dateToPHTTime(endD)?.split(':')[1] || 0);
 
   return { startMins: stMins, endMins: enMins };
 };
@@ -175,7 +179,7 @@ const TimelineBar = memo(({ bookings = [], pickedWindow = null, compact = false 
         className="absolute inset-y-0 bg-gray-300/70"
         title="Lunch Break (11:30 AM - 1:00 PM)"
         style={{
-          left: `${pct(BREAK_START_MINS)}%`,
+          left:  `${pct(BREAK_START_MINS)}%`,
           width: `${pct(BREAK_END_MINS) - pct(BREAK_START_MINS)}%`,
         }}
       />
@@ -298,10 +302,8 @@ CartRow.displayName = 'CartRow';
 const InventoryUnitRow = memo(({
   item, inCart, bookings, visualPickedWindow, bookedAtSlot, onAdd, onRemove,
 }) => {
-  const unavailable = item._avail <= 0;
-  const disabled    = unavailable || bookedAtSlot;
-  
-  // Only pass bookings that overlap with the current day to the TimelineBar
+  const unavailable    = item._avail <= 0;
+  const disabled       = unavailable || bookedAtSlot;
   const visualBookings = bookings.filter(b => b.startMins != null);
 
   return (
@@ -398,26 +400,25 @@ const InventoryGroupCard = memo(({
   const [expanded, setExpanded] = useState(false);
 
   const isSingleUnit = group.items.length === 1 && group.inventory_mode === 'unit';
-  const isFungible   = group.inventory_mode !== 'unit'; 
+  const isFungible   = group.inventory_mode !== 'unit';
 
   const cartEntries = useMemo(
     () => cart.filter(c => c.name === group.name),
     [cart, group.name],
   );
   const cartTotalQty = cartEntries.reduce((s, c) => s + c.req_qty, 0);
-  const cartCount    = cartEntries.length; 
+  const cartCount    = cartEntries.length;
 
-  const bookings = getBookingsForGroup(group);
+  const bookings       = getBookingsForGroup(group);
   const visualBookings = bookings.filter(b => b.startMins != null);
 
   const freeAtSlot = useMemo(() => {
     if (!step2Done || !pickedWindowTs) return null;
     if (isFungible) {
       let overlappingQty = 0;
-      const poolItem = group.items[0];
+      const poolItem    = group.items[0];
       const poolBookings = getBookingsForItem(poolItem);
       for (const b of poolBookings) {
-        // Universal Timestamp Overlap Logic
         if (pickedWindowTs.startTs < b.endTs && pickedWindowTs.endTs > b.startTs) {
           overlappingQty += (b.qty || 1);
         }
@@ -428,18 +429,18 @@ const InventoryGroupCard = memo(({
     }
   }, [step2Done, isFungible, group, isItemBookedAtSlot, getBookingsForItem, pickedWindowTs]);
 
-  const allOut         = group.totalAvail <= 0;
-  const allBookedNow   = step2Done && !isFungible && group.totalAvail > 0 && freeAtSlot === 0;
-  const fullyUnavail   = allOut || allBookedNow;
+  const allOut       = group.totalAvail <= 0;
+  const allBookedNow = step2Done && !isFungible && group.totalAvail > 0 && freeAtSlot === 0;
+  const fullyUnavail = allOut || allBookedNow;
 
-  const poolItem = isFungible ? group.items[0] : null;
+  const poolItem   = isFungible ? group.items[0] : null;
   const poolInCart = poolItem ? cart.find(c => cartKeyOf(c) === cartKeyOf(poolItem)) : null;
 
   const handleGroupClick = () => {
-    if (isFungible) return; 
+    if (isFungible) return;
     if (fullyUnavail) return;
     if (isSingleUnit) {
-      const item = group.items[0];
+      const item     = group.items[0];
       const alreadyIn = cart.some(c => cartKeyOf(c) === cartKeyOf(item));
       if (alreadyIn) onRemove(item);
       else onAdd(item);
@@ -642,9 +643,9 @@ const InventoryGroupCard = memo(({
 
           <div className="space-y-2">
             {group.items.map((item) => {
-              const itemBookings   = getBookingsForItem(item);
-              const bookedAtSlot   = step2Done && isItemBookedAtSlot(item);
-              const alreadyInCart  = inCartForItem(item);
+              const itemBookings  = getBookingsForItem(item);
+              const bookedAtSlot  = step2Done && isItemBookedAtSlot(item);
+              const alreadyInCart = inCartForItem(item);
 
               return (
                 <InventoryUnitRow
@@ -676,7 +677,7 @@ export default function NewRequest() {
 
   const initialRoom = useMemo(
     () => (user?.room_id && user.room_id !== 'null' ? String(user.room_id) : ''),
-    [], 
+    [],
   );
 
   const submitRef = useRef(null);
@@ -787,7 +788,7 @@ export default function NewRequest() {
 
   useEffect(() => {
     const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
-    
+
     socket.on('inventory-updated', (payload) => {
       const eRoom = payload?.room_id ?? payload?.roomId;
       if (!eRoom || String(eRoom) === String(selectedRoomIdRef.current)) {
@@ -795,7 +796,7 @@ export default function NewRequest() {
         fetchRefs.current.fetchCalendarEvents();
       }
     });
-    
+
     socket.on('request-updated', (payload) => {
       const eRoom = payload?.room_id ?? payload?.roomId;
       if (!eRoom || String(eRoom) === String(selectedRoomIdRef.current)) {
@@ -803,11 +804,11 @@ export default function NewRequest() {
         fetchRefs.current.fetchCalendarEvents();
       }
     });
-    
-    return () => { 
-      setTimeout(() => socket.disconnect(), 100); 
+
+    return () => {
+      setTimeout(() => socket.disconnect(), 100);
     };
-  }, []); 
+  }, []);
 
   // Re-fetch when date changes
   useEffect(() => {
@@ -863,23 +864,21 @@ export default function NewRequest() {
   }, [filteredInventory]);
 
   // ── ⚡ MULTI-DAY TIME RESOLVERS ──────────────────────────────────────────
-  
+
   const pickedWindowTs = useMemo(() => {
     if (!selectedDate || !pickupTime) return null;
-    
-    const startD = new Date(toISO(selectedDate, pickupTime));
+
+    const startD  = new Date(toISO(selectedDate, pickupTime));
     const startTs = startD.getTime();
 
-    let endD, endTs;
+    let endTs;
 
     if (bookingMode === 'sameday') {
       if (!duration) return null;
-      endD = new Date(startTs + duration * 60_000);
-      endTs = endD.getTime();
+      endTs = startTs + duration * 60_000;
     } else {
       if (!endDate || !returnTime) return null;
-      endD = new Date(toISO(endDate, returnTime));
-      endTs = endD.getTime();
+      endTs = new Date(toISO(endDate, returnTime)).getTime();
     }
 
     if (endTs <= startTs) return null;
@@ -891,7 +890,6 @@ export default function NewRequest() {
     if (!pickedWindowTs || !selectedDate) return null;
     return clampToDayMins(selectedDate, pickedWindowTs.startTs, pickedWindowTs.endTs);
   }, [pickedWindowTs, selectedDate]);
-
 
   // ── Booking windows helpers ────────────────────────────────────────────────
   const getBookingsForItem = useCallback(
@@ -916,8 +914,10 @@ export default function NewRequest() {
         let qtyInEv = 0;
         const matches = (ev.items ?? []).some(evItem => {
           if (item.inventory_mode === 'unit') {
-            if ((evItem.inventory_item_id && String(evItem.inventory_item_id) === String(item.item_id)) ||
-                (!evItem.inventory_item_id && String(evItem.inventory_type_id) === String(item.inventory_type_id))) {
+            if (
+              (evItem.inventory_item_id && String(evItem.inventory_item_id) === String(item.item_id)) ||
+              (!evItem.inventory_item_id && String(evItem.inventory_type_id) === String(item.inventory_type_id))
+            ) {
               qtyInEv = 1; return true;
             }
           } else if (item.kind === 'consumable') {
@@ -934,17 +934,17 @@ export default function NewRequest() {
 
         if (!matches) continue;
 
-        const stTs = evStart.getTime();
-        const enTs = evEnd.getTime();
+        const stTs        = evStart.getTime();
+        const enTs        = evEnd.getTime();
         const visualClamp = clampToDayMins(selectedDate, stTs, enTs);
 
         results.push({
           startTs:   stTs,
           endTs:     enTs,
-          startMins: visualClamp?.startMins, 
+          startMins: visualClamp?.startMins,
           endMins:   visualClamp?.endMins,
           label:     `${fmtDateShort(evStart.toISOString().split('T')[0])} ${fmtTime(evStart)}`,
-          qty:       qtyInEv
+          qty:       qtyInEv,
         });
       }
       return results;
@@ -954,7 +954,7 @@ export default function NewRequest() {
 
   const getBookingsForGroup = useCallback(
     (group) => {
-      const seen = new Set();
+      const seen    = new Set();
       const results = [];
       for (const item of group.items) {
         for (const b of getBookingsForItem(item)) {
@@ -965,6 +965,18 @@ export default function NewRequest() {
       return results;
     },
     [getBookingsForItem],
+  );
+
+  // ── isItemBookedAtSlot — defined HERE, before anything that depends on it ──
+  const isItemBookedAtSlot = useCallback(
+    (item) => {
+      if (!pickedWindowTs) return false;
+      for (const b of getBookingsForItem(item)) {
+        if (pickedWindowTs.startTs < b.endTs && pickedWindowTs.endTs > b.startTs) return true;
+      }
+      return false;
+    },
+    [pickedWindowTs, getBookingsForItem],
   );
 
   const allDayBookings = useMemo(() => {
@@ -985,7 +997,7 @@ export default function NewRequest() {
         : new Date(evStart.getTime() + 60 * 60_000);
 
       const clamp = clampToDayMins(selectedDate, evStart.getTime(), evEnd.getTime());
-      if (!clamp) continue; // Doesn't overlap with the viewed day
+      if (!clamp) continue;
 
       const k = `${clamp.startMins}-${clamp.endMins}`;
       if (!seen.has(k)) {
@@ -1002,25 +1014,29 @@ export default function NewRequest() {
 
     const { startTs, endTs } = pickedWindowTs;
     const startD = new Date(startTs);
-    const endD = new Date(endTs);
+    const endD   = new Date(endTs);
 
-    // ⚡ FIX 1: Universal "Past Time" check using absolute epoch timestamps (No timezone bugs)
+    // Past-time check using absolute epoch timestamps
     if (startTs < Date.now()) return 'Pickup time cannot be in the past.';
 
     // Business Hours Validation (7 AM to 8 PM)
     const phtStartHour = parseInt(dateToPHTTime(startD)?.split(':')[0] || 0);
-    const phtEndHour = parseInt(dateToPHTTime(endD)?.split(':')[0] || 0);
-    
-    if (phtStartHour < 7 || phtStartHour >= 20) return 'Pickup time must be within business hours (7:00 AM - 8:00 PM).';
-    if (phtEndHour < 7 || (phtEndHour >= 20 && dateToPHTTime(endD)?.split(':')[1] !== '00')) return 'Return time must be within business hours (7:00 AM - 8:00 PM).';
+    const phtEndHour   = parseInt(dateToPHTTime(endD)?.split(':')[0]   || 0);
+
+    if (phtStartHour < 7 || phtStartHour >= 20)
+      return 'Pickup time must be within business hours (7:00 AM - 8:00 PM).';
+    if (phtEndHour < 7 || (phtEndHour >= 20 && dateToPHTTime(endD)?.split(':')[1] !== '00'))
+      return 'Return time must be within business hours (7:00 AM - 8:00 PM).';
 
     const startMins = timeToMins(dateToPHTTime(startD));
-    const endMins = timeToMins(dateToPHTTime(endD));
+    const endMins   = timeToMins(dateToPHTTime(endD));
 
-    // ⚡ FIX 2: Strict Lunch Break Boundaries (>= and <=)
-    if (startMins < BREAK_END_MINS && startMins >= BREAK_START_MINS) return 'Pickup time cannot be during the lunch break (11:30 AM - 1:00 PM).';
-    if (endMins <= BREAK_END_MINS && endMins > BREAK_START_MINS) return 'Return time cannot be during the lunch break (11:30 AM - 1:00 PM).';
-    if (startMins < BREAK_START_MINS && endMins > BREAK_END_MINS && bookingMode === 'sameday') return 'Same-day bookings cannot span across the lunch break. Please split into two bookings.';
+    if (startMins < BREAK_END_MINS && startMins >= BREAK_START_MINS)
+      return 'Pickup time cannot be during the lunch break (11:30 AM - 1:00 PM).';
+    if (endMins <= BREAK_END_MINS && endMins > BREAK_START_MINS)
+      return 'Return time cannot be during the lunch break (11:30 AM - 1:00 PM).';
+    if (startMins < BREAK_START_MINS && endMins > BREAK_END_MINS && bookingMode === 'sameday')
+      return 'Same-day bookings cannot span across the lunch break. Please split into two bookings.';
 
     // Cart Collision Validation
     if (cart.length > 0) {
@@ -1033,9 +1049,7 @@ export default function NewRequest() {
         ).getTime();
 
         const rawEnd = ev.return_deadline ?? ev.pickup_end;
-        const evEnd  = rawEnd
-          ? new Date(rawEnd).getTime()
-          : evStart + 60 * 60_000;
+        const evEnd  = rawEnd ? new Date(rawEnd).getTime() : evStart + 60 * 60_000;
 
         if (!(startTs < evEnd && endTs > evStart)) continue;
 
@@ -1071,16 +1085,13 @@ export default function NewRequest() {
 
       let maxForSlot = item.inventory_mode === 'unit' ? 1 : item._avail;
 
-      // Ensure we don't exceed time-slot capacities
       if (pickedWindowTs) {
         if (item.inventory_mode === 'unit') {
-          // Strictly block serialized units if ANY booking overlaps
           if (isItemBookedAtSlot(item)) {
             toast.error(`${item.name}${item.barcode ? ` (${item.barcode})` : ''} is booked during this time frame.`);
             return;
           }
         } else {
-          // Calculate remaining capacity for bulk/consumable items
           let overlappingQty = 0;
           const bookings = getBookingsForItem(item);
           for (const b of bookings) {
@@ -1089,7 +1100,7 @@ export default function NewRequest() {
             }
           }
           maxForSlot = Math.max(0, item._avail - overlappingQty);
-          
+
           if (maxForSlot <= 0) {
             toast.error(`${item.name} is fully booked during this time frame.`);
             return;
@@ -1101,9 +1112,8 @@ export default function NewRequest() {
       setCart(prev => {
         const existing = prev.find(c => cartKeyOf(c) === key);
         if (existing) {
-          // Cannot add more than 1 of a specific serialized unit
-          if (item.inventory_mode === 'unit') return prev; 
-          
+          if (item.inventory_mode === 'unit') return prev;
+
           if (existing.req_qty >= maxForSlot) {
             setTimeout(() => toast.error(`Only ${maxForSlot} available during this time slot.`), 0);
             return prev;
@@ -1192,18 +1202,18 @@ export default function NewRequest() {
 
     try {
       const payload = {
-        room_id: selectedRoomId,
-        purpose: finalPurpose,
-        email: email.trim(),
-        pickup_datetime:  new Date(pickedWindowTs.startTs).toISOString(),
-        return_deadline:  new Date(pickedWindowTs.endTs).toISOString(),
+        room_id:         selectedRoomId,
+        purpose:         finalPurpose,
+        email:           email.trim(),
+        pickup_datetime: new Date(pickedWindowTs.startTs).toISOString(),
+        return_deadline: new Date(pickedWindowTs.endTs).toISOString(),
         items: cart.map(c => ({
           inventory_type_id: c.inventory_type_id,
           quantity:          c.req_qty,
           qty_requested:     c.req_qty,
-          ...(c.inventory_mode === 'unit'       && { inventory_item_id: c.item_id }),
-          ...(c.inventory_mode === 'quantity'   && { stock_id: c.stock_id ?? c.id }),
-          ...(c.kind === 'consumable'           && { consumable_id: c.consumable_id ?? c.id }),
+          ...(c.inventory_mode === 'unit'     && { inventory_item_id: c.item_id }),
+          ...(c.inventory_mode === 'quantity' && { stock_id: c.stock_id ?? c.id }),
+          ...(c.kind === 'consumable'         && { consumable_id: c.consumable_id ?? c.id }),
         })),
       };
 
@@ -1224,8 +1234,10 @@ export default function NewRequest() {
   const cartTotalItems = cart.reduce((s, c) => s + c.req_qty, 0);
 
   const pickupTimeDisplay = pickedWindowTs ? fmtTime(new Date(pickedWindowTs.startTs)) : null;
-  const returnTimeDisplay = pickedWindowTs ? fmtTime(new Date(pickedWindowTs.endTs)) : null;
-  const returnDateDisplay = pickedWindowTs ? fmtDateShort(new Date(pickedWindowTs.endTs).toISOString().split('T')[0]) : null;
+  const returnTimeDisplay = pickedWindowTs ? fmtTime(new Date(pickedWindowTs.endTs))   : null;
+  const returnDateDisplay = pickedWindowTs
+    ? fmtDateShort(new Date(pickedWindowTs.endTs).toISOString().split('T')[0])
+    : null;
 
   return (
     <div className="flex flex-col h-[calc(100dvh-4rem)] bg-white overflow-hidden relative">
@@ -1305,7 +1317,7 @@ export default function NewRequest() {
                       roomId={selectedRoomId}
                       onDateSelect={handleDateSelect}
                       selectedDate={selectedDate}
-                      publicMode={true} 
+                      publicMode={true}
                       catalogNode={
                         selectedDate ? (
                           <div className="p-4 mt-auto sticky bottom-0 bg-white border-t border-gray-200 z-10 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)]">
@@ -1438,14 +1450,13 @@ export default function NewRequest() {
                         </p>
                         <div className="flex flex-wrap gap-2">
                           {DURATION_OPTIONS.map(opt => {
-                            const tmpEnd = new Date(new Date(toISO(selectedDate, pickupTime)).getTime() + opt.mins * 60000);
-                            const tHour = tmpEnd.getHours();
-                            const tMin = tmpEnd.getMinutes();
-                            
-                            // Basic Intraday Validations
+                            const tmpEnd  = new Date(new Date(toISO(selectedDate, pickupTime)).getTime() + opt.mins * 60000);
+                            const tHour   = tmpEnd.getHours();
+                            const tMin    = tmpEnd.getMinutes();
+
                             let valid = true;
-                            if (tHour >= 20 && tMin > 0) valid = false; // Post 8 PM
-                            if (timeToMins(pickupTime) < BREAK_END_MINS && (timeToMins(pickupTime) + opt.mins) > BREAK_START_MINS) valid = false; // Lunch
+                            if (tHour >= 20 && tMin > 0) valid = false;
+                            if (timeToMins(pickupTime) < BREAK_END_MINS && (timeToMins(pickupTime) + opt.mins) > BREAK_START_MINS) valid = false;
 
                             const sel = duration === opt.mins;
                             return (
@@ -1512,16 +1523,12 @@ export default function NewRequest() {
                         {currentSlotOk ? (
                           <>
                             <Check size={16} className="shrink-0 mt-0.5" />
-                            <span>
-                              Timeframe valid. Browse equipment below to continue.
-                            </span>
+                            <span>Timeframe valid. Browse equipment below to continue.</span>
                           </>
                         ) : (
                           <>
                             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                            <span>
-                              {slotError}
-                            </span>
+                            <span>{slotError}</span>
                           </>
                         )}
                       </div>
