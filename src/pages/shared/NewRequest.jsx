@@ -1065,7 +1065,6 @@ export default function NewRequest() {
   const canSubmit = step3Done && purpose && (purpose !== 'Other' || customPurpose.trim()) && email;
 
   // ── Cart actions ───────────────────────────────────────────────────────────
-  // ── Cart actions ───────────────────────────────────────────────────────────
   const addToCart = useCallback(
     (item) => {
       if (isRoomClosed || item._avail <= 0) return;
