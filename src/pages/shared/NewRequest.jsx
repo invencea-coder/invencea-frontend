@@ -1,14 +1,11 @@
 /**
- * NewRequest.jsx — Lab Equipment Reservation
+ * NewRequest.jsx — Lab Equipment Reservation (Multi-Day Edition)
  *
  * Architecture decisions:
- * - Sub-components are defined OUTSIDE the main component to avoid
- * recreation on every render (the biggest performance bug in the original).
- * - Cart distinguishes between "unit" items (physical, qty always 1) and
- * "quantity/consumable" items (fungible, qty can be > 1).
- * - All time comparisons are done in explicit UTC/PHT to avoid DST bugs.
- * - Socket listener uses a stable ref so it never needs to be in dep arrays.
- * - Derived state is computed once per render via useMemo, not scattered.
+ * - Added Support for Multi-Day reservations with seamless UI toggle.
+ * - Availability logic upgraded from Intraday Minutes to Unix Epoch Timestamps.
+ * - TimelineBar visually clamps multi-day spans so they render correctly on the viewed day.
+ * - Cart distinguishes between physical units and fungible bulk items.
  */
 
 import React, {
@@ -20,7 +17,7 @@ import {
   DoorClosed, CheckCircle2, CheckCircle, Timer, MapPin,
   ShoppingBag, Camera, X, CalendarDays, Loader2, PackageX,
   Clock, Mail, ChevronDown, ChevronUp, Layers, Check, Lock,
-  ArrowLeft, ArrowDown,
+  ArrowLeft, ArrowDown, CalendarRange
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
@@ -95,20 +92,20 @@ const timeToMins = (t) => {
 const minsToTime = (m) =>
   `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
-const addMins = (timeStr, mins) => minsToTime(timeToMins(timeStr) + mins);
-
 const fmtTime = (d) => {
   if (!d) return '';
   return new Date(d).toLocaleString('en-PH', {
     timeZone: PHT, hour: 'numeric', minute: '2-digit', hour12: true,
   });
 };
+
 const fmtDateLong = (d) => {
   if (!d) return '';
   return new Date(d).toLocaleString('en-PH', {
     timeZone: PHT, weekday: 'long', month: 'short', day: 'numeric', year: 'numeric',
   });
 };
+
 const fmtDateShort = (dateStr) => {
   if (!dateStr) return '';
   const [y, mo, d] = dateStr.split('-').map(Number);
@@ -123,14 +120,9 @@ const cartKeyOf = (item) => {
   return `qty:${item.stock_id ?? item.id}`;
 };
 
-const maxQtyOf = (item) =>
-  item.inventory_mode === 'unit' ? 1 : (item._avail ?? 0);
-
 const isCalendarEventExpired = (ev) => {
   const status = ev.status?.toUpperCase();
-  // Active issuances are never "expired" in the context of freeing up calendar space
   if (['ISSUED', 'PARTIALLY RETURNED'].includes(status)) return false;
-  
   if (!['PENDING', 'APPROVED', 'PENDING APPROVAL'].includes(status)) return false;
 
   const now = Date.now();
@@ -150,6 +142,25 @@ const isCalendarEventExpired = (ev) => {
   return false;
 };
 
+// Extractor to clamp global timestamps into visual minute ranges for a specific viewed date
+const clampToDayMins = (dateStr, tsStart, tsEnd) => {
+  const dayStartTs = new Date(`${dateStr}T00:00:00+08:00`).getTime();
+  const dayEndTs = new Date(`${dateStr}T23:59:59+08:00`).getTime();
+
+  if (tsEnd <= dayStartTs || tsStart >= dayEndTs) return null;
+
+  const cStart = Math.max(tsStart, dayStartTs);
+  const cEnd = Math.min(tsEnd, dayEndTs);
+
+  const startD = new Date(cStart);
+  const endD = new Date(cEnd);
+
+  const stMins = parseInt(dateToPHTTime(startD)?.split(':')[0] || 0) * 60 + parseInt(dateToPHTTime(startD)?.split(':')[1] || 0);
+  const enMins = parseInt(dateToPHTTime(endD)?.split(':')[0] || 0) * 60 + parseInt(dateToPHTTime(endD)?.split(':')[1] || 0);
+
+  return { startMins: stMins, endMins: enMins };
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TimelineBar
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,7 +171,6 @@ const TimelineBar = memo(({ bookings = [], pickedWindow = null, compact = false 
 
   return (
     <div className={`relative ${compact ? 'h-2' : 'h-3'} rounded-full bg-gray-100 overflow-hidden`}>
-      
       <div
         className="absolute inset-y-0 bg-gray-300/70"
         title="Lunch Break (11:30 AM - 1:00 PM)"
@@ -171,6 +181,7 @@ const TimelineBar = memo(({ bookings = [], pickedWindow = null, compact = false 
       />
 
       {bookings.map((b, i) => {
+        if (b.startMins == null || b.endMins == null) return null;
         const left  = pct(b.startMins);
         const width = Math.max(pct(b.endMins) - left, 1.5);
         return (
@@ -182,7 +193,7 @@ const TimelineBar = memo(({ bookings = [], pickedWindow = null, compact = false 
         );
       })}
 
-      {pickedWindow && (
+      {pickedWindow && pickedWindow.startMins != null && (
         <div
           className="absolute inset-y-0 bg-teal-400/80 rounded-sm"
           style={{
@@ -285,10 +296,13 @@ CartRow.displayName = 'CartRow';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const InventoryUnitRow = memo(({
-  item, inCart, bookings, pickedWindow, bookedAtSlot, onAdd, onRemove,
+  item, inCart, bookings, visualPickedWindow, bookedAtSlot, onAdd, onRemove,
 }) => {
   const unavailable = item._avail <= 0;
   const disabled    = unavailable || bookedAtSlot;
+  
+  // Only pass bookings that overlap with the current day to the TimelineBar
+  const visualBookings = bookings.filter(b => b.startMins != null);
 
   return (
     <div
@@ -308,11 +322,11 @@ const InventoryUnitRow = memo(({
       </span>
 
       <div className="flex-1 min-w-0">
-        {bookings.length > 0 ? (
+        {visualBookings.length > 0 ? (
           <>
-            <TimelineBar bookings={bookings} pickedWindow={pickedWindow} compact />
+            <TimelineBar bookings={visualBookings} pickedWindow={visualPickedWindow} compact />
             <div className="flex flex-wrap gap-1 mt-1.5">
-              {bookings.map((b, i) => (
+              {visualBookings.map((b, i) => (
                 <span
                   key={i}
                   className={`text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap
@@ -325,12 +339,12 @@ const InventoryUnitRow = memo(({
           </>
         ) : (
           <span className="text-[11px] font-bold text-emerald-600">
-            {pickedWindow ? '✓ Free at your time' : 'Free all day'}
+            {visualPickedWindow ? '✓ Free at your time' : 'Free all day'}
           </span>
         )}
         {bookedAtSlot && (
           <span className="text-[10px] font-black text-red-600 block mt-0.5">
-            Already booked at your selected time
+            Already booked during your selected timeframe
           </span>
         )}
       </div>
@@ -370,7 +384,8 @@ InventoryUnitRow.displayName = 'InventoryUnitRow';
 const InventoryGroupCard = memo(({
   group,
   cart,
-  pickedWindow,
+  pickedWindowTs,
+  visualPickedWindow,
   step2Done,
   isItemBookedAtSlot,
   getBookingsForGroup,
@@ -393,16 +408,17 @@ const InventoryGroupCard = memo(({
   const cartCount    = cartEntries.length; 
 
   const bookings = getBookingsForGroup(group);
+  const visualBookings = bookings.filter(b => b.startMins != null);
 
   const freeAtSlot = useMemo(() => {
-    if (!step2Done) return null;
+    if (!step2Done || !pickedWindowTs) return null;
     if (isFungible) {
-      if (!pickedWindow) return group.totalAvail;
       let overlappingQty = 0;
       const poolItem = group.items[0];
       const poolBookings = getBookingsForItem(poolItem);
       for (const b of poolBookings) {
-        if (pickedWindow.startMins < b.endMins && pickedWindow.endMins > b.startMins) {
+        // Universal Timestamp Overlap Logic
+        if (pickedWindowTs.startTs < b.endTs && pickedWindowTs.endTs > b.startTs) {
           overlappingQty += (b.qty || 1);
         }
       }
@@ -410,7 +426,7 @@ const InventoryGroupCard = memo(({
     } else {
       return group.items.filter(i => i._avail > 0 && !isItemBookedAtSlot(i)).length;
     }
-  }, [step2Done, isFungible, group, isItemBookedAtSlot, getBookingsForItem, pickedWindow]);
+  }, [step2Done, isFungible, group, isItemBookedAtSlot, getBookingsForItem, pickedWindowTs]);
 
   const allOut         = group.totalAvail <= 0;
   const allBookedNow   = step2Done && !isFungible && group.totalAvail > 0 && freeAtSlot === 0;
@@ -489,9 +505,9 @@ const InventoryGroupCard = memo(({
               {group.name}
             </p>
 
-            {selectedDate && bookings.length > 0 && (
+            {selectedDate && visualBookings.length > 0 && (
               <div className="mt-1 mb-1">
-                <TimelineBar bookings={bookings} pickedWindow={pickedWindow} compact />
+                <TimelineBar bookings={visualBookings} pickedWindow={visualPickedWindow} compact />
               </div>
             )}
 
@@ -504,7 +520,7 @@ const InventoryGroupCard = memo(({
 
               {allBookedNow ? (
                 <span className="text-[9px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded flex items-center gap-1">
-                  <Clock size={10} /> All booked at your time
+                  <Clock size={10} /> All booked
                 </span>
               ) : allOut ? (
                 <span className="text-[9px] font-black text-red-500 bg-red-50 px-2 py-0.5 rounded flex items-center gap-1">
@@ -512,7 +528,7 @@ const InventoryGroupCard = memo(({
                 </span>
               ) : step2Done && freeAtSlot !== null ? (
                 <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
-                  {freeAtSlot}/{group.totalUnits} free at your time
+                  {freeAtSlot}/{group.totalUnits} free for duration
                 </span>
               ) : (
                 <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
@@ -616,7 +632,7 @@ const InventoryGroupCard = memo(({
               <span className="flex items-center gap-1">
                 <span className="w-2.5 h-2 rounded-sm bg-red-400/75 inline-block" />Booked
               </span>
-              {pickedWindow && (
+              {visualPickedWindow && (
                 <span className="flex items-center gap-1">
                   <span className="w-2.5 h-2 rounded-sm bg-teal-400/80 inline-block" />Your slot
                 </span>
@@ -636,7 +652,7 @@ const InventoryGroupCard = memo(({
                   item={item}
                   inCart={alreadyInCart}
                   bookings={itemBookings}
-                  pickedWindow={pickedWindow}
+                  visualPickedWindow={visualPickedWindow}
                   bookedAtSlot={bookedAtSlot}
                   onAdd={onAdd}
                   onRemove={onRemove}
@@ -672,8 +688,12 @@ export default function NewRequest() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [calendarOpen, setCalendarOpen] = useState(true);
 
+  // Time & Multi-Day Modes
+  const [bookingMode, setBookingMode]   = useState('sameday'); // 'sameday' | 'multiday'
   const [pickupTime, setPickupTime]     = useState('');
   const [duration, setDuration]         = useState(null);
+  const [endDate, setEndDate]           = useState('');
+  const [returnTime, setReturnTime]     = useState('');
 
   const [inventory, setInventory]       = useState([]);
   const [loadingInv, setLoadingInv]     = useState(false);
@@ -760,13 +780,11 @@ export default function NewRequest() {
     }
   }, []);
 
-  // ⚡ FIX: Stale Closure Elimination. Keep a fresh ref of our fetchers.
   const fetchRefs = useRef({ fetchInventory, fetchCalendarEvents });
   useEffect(() => {
     fetchRefs.current = { fetchInventory, fetchCalendarEvents };
   }, [fetchInventory, fetchCalendarEvents]);
 
-  // ⚡ FIX: Use the ref to call the fresh fetchers inside the socket listener
   useEffect(() => {
     const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
     
@@ -791,7 +809,7 @@ export default function NewRequest() {
     };
   }, []); 
 
-  // Re-fetch when date changes (date changes affect per-day availability)
+  // Re-fetch when date changes
   useEffect(() => {
     fetchInventory();
     fetchCalendarEvents();
@@ -844,16 +862,43 @@ export default function NewRequest() {
     });
   }, [filteredInventory]);
 
+  // ── ⚡ MULTI-DAY TIME RESOLVERS ──────────────────────────────────────────
+  
+  const pickedWindowTs = useMemo(() => {
+    if (!selectedDate || !pickupTime) return null;
+    
+    const startD = new Date(toISO(selectedDate, pickupTime));
+    const startTs = startD.getTime();
+
+    let endD, endTs;
+
+    if (bookingMode === 'sameday') {
+      if (!duration) return null;
+      endD = new Date(startTs + duration * 60_000);
+      endTs = endD.getTime();
+    } else {
+      if (!endDate || !returnTime) return null;
+      endD = new Date(toISO(endDate, returnTime));
+      endTs = endD.getTime();
+    }
+
+    if (endTs <= startTs) return null;
+
+    return { startTs, endTs };
+  }, [selectedDate, pickupTime, bookingMode, duration, endDate, returnTime]);
+
+  const visualPickedWindow = useMemo(() => {
+    if (!pickedWindowTs || !selectedDate) return null;
+    return clampToDayMins(selectedDate, pickedWindowTs.startTs, pickedWindowTs.endTs);
+  }, [pickedWindowTs, selectedDate]);
+
+
   // ── Booking windows helpers ────────────────────────────────────────────────
   const getBookingsForItem = useCallback(
     (item) => {
       if (!selectedDate || !calendarEvents.length) return [];
 
       const results = [];
-      const targetDateStart = new Date(selectedDate);
-      targetDateStart.setHours(0, 0, 0, 0);
-      const targetDateEnd = new Date(targetDateStart);
-      targetDateEnd.setDate(targetDateEnd.getDate() + 1);
 
       for (const ev of calendarEvents) {
         if (isCalendarEventExpired(ev)) continue;
@@ -867,8 +912,6 @@ export default function NewRequest() {
         const evEnd  = rawEnd
           ? new Date(rawEnd)
           : new Date(evStart.getTime() + 60 * 60_000);
-
-        if (evEnd <= targetDateStart || evStart >= targetDateEnd) continue;
 
         let qtyInEv = 0;
         const matches = (ev.items ?? []).some(evItem => {
@@ -891,16 +934,18 @@ export default function NewRequest() {
 
         if (!matches) continue;
 
-        const st = dateToPHTTime(evStart);
-        const en = dateToPHTTime(evEnd);
-        if (st && en) {
-          results.push({
-            startMins: timeToMins(st),
-            endMins:   timeToMins(en),
-            label:     `${fmtTime(evStart)} – ${fmtTime(evEnd)}`,
-            qty:       qtyInEv
-          });
-        }
+        const stTs = evStart.getTime();
+        const enTs = evEnd.getTime();
+        const visualClamp = clampToDayMins(selectedDate, stTs, enTs);
+
+        results.push({
+          startTs:   stTs,
+          endTs:     enTs,
+          startMins: visualClamp?.startMins, 
+          endMins:   visualClamp?.endMins,
+          label:     `${fmtDateShort(evStart.toISOString().split('T')[0])} ${fmtTime(evStart)}`,
+          qty:       qtyInEv
+        });
       }
       return results;
     },
@@ -913,7 +958,7 @@ export default function NewRequest() {
       const results = [];
       for (const item of group.items) {
         for (const b of getBookingsForItem(item)) {
-          const k = `${b.startMins}-${b.endMins}`;
+          const k = `${b.startTs}-${b.endTs}`;
           if (!seen.has(k)) { seen.add(k); results.push(b); }
         }
       }
@@ -923,142 +968,122 @@ export default function NewRequest() {
   );
 
   const allDayBookings = useMemo(() => {
-  if (!selectedDate || !calendarEvents.length) return [];
-  const seen    = new Set();
-  const results = [];
-  
-  const targetStart = new Date(`${selectedDate}T00:00:00+08:00`);
-  const targetEnd   = new Date(`${selectedDate}T23:59:59+08:00`);
+    if (!selectedDate || !calendarEvents.length) return [];
+    const seen    = new Set();
+    const results = [];
 
-  for (const ev of calendarEvents) {
-    if (isCalendarEventExpired(ev)) continue;
-    // ⚡ FIX: Added ISSUED and PARTIALLY RETURNED
-    if (!['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(ev.status?.toUpperCase())) continue;
+    for (const ev of calendarEvents) {
+      if (isCalendarEventExpired(ev)) continue;
+      if (!['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(ev.status?.toUpperCase())) continue;
 
-    const evStart = new Date(
-      ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
-    );
-    const rawEnd = ev.return_deadline ?? ev.pickup_end;
-    const evEnd  = rawEnd
-      ? new Date(rawEnd)
-      : new Date(evStart.getTime() + 60 * 60_000);
+      const evStart = new Date(
+        ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
+      );
+      const rawEnd = ev.return_deadline ?? ev.pickup_end;
+      const evEnd  = rawEnd
+        ? new Date(rawEnd)
+        : new Date(evStart.getTime() + 60 * 60_000);
 
-    // Skip if the event doesn't touch the selected date at all
-    if (evEnd <= targetStart || evStart >= targetEnd) continue;
+      const clamp = clampToDayMins(selectedDate, evStart.getTime(), evEnd.getTime());
+      if (!clamp) continue; // Doesn't overlap with the viewed day
 
-    // Clamp the times to fit within today's visual bar
-    const clampedStart = evStart < targetStart ? targetStart : evStart;
-    const clampedEnd   = evEnd > targetEnd ? targetEnd : evEnd;
-
-    const st = dateToPHTTime(clampedStart);
-    const en = dateToPHTTime(clampedEnd);
-    if (!st || !en) continue;
-    
-    const k = `${st}-${en}`;
-    if (!seen.has(k)) {
-      seen.add(k);
-      results.push({ startMins: timeToMins(st), endMins: timeToMins(en) });
+      const k = `${clamp.startMins}-${clamp.endMins}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        results.push(clamp);
+      }
     }
-  }
-  return results;
-}, [selectedDate, calendarEvents]);
+    return results;
+  }, [selectedDate, calendarEvents]);
 
   // ── Availability checks ────────────────────────────────────────────────────
-  const isSlotAvailable = useCallback(
-    (startTimeStr, durationMins) => {
-      if (!startTimeStr || !durationMins || !selectedDate) return false;
+  const isSlotAvailable = useCallback(() => {
+    if (!pickedWindowTs || !selectedDate) return false;
 
-      const slotStart = new Date(toISO(selectedDate, startTimeStr));
-      const slotEnd   = new Date(slotStart.getTime() + durationMins * 60_000);
-      const closing   = new Date(toISO(selectedDate, '20:00'));
+    const { startTs, endTs } = pickedWindowTs;
+    const startD = new Date(startTs);
+    const endD = new Date(endTs);
 
-      if (slotEnd > closing) return false;
+    // Business Hours Validation (7 AM to 8 PM)
+    const phtStartHour = parseInt(dateToPHTTime(startD)?.split(':')[0] || 0);
+    const phtEndHour = parseInt(dateToPHTTime(endD)?.split(':')[0] || 0);
+    
+    if (phtStartHour < 7 || phtStartHour >= 20) return false;
+    if (phtEndHour < 7 || (phtEndHour >= 20 && dateToPHTTime(endD)?.split(':')[1] !== '00')) return false;
 
-      const nowPHT = new Date(new Date().toLocaleString('en-US', { timeZone: PHT }));
-      if (slotStart < nowPHT) return false;
+    const startMins = timeToMins(dateToPHTTime(startD));
+    const endMins = timeToMins(dateToPHTTime(endD));
 
-      const startMins = timeToMins(startTimeStr);
-      const endMins = startMins + durationMins;
-      if (startMins < BREAK_END_MINS && endMins > BREAK_START_MINS) return false;
+    // Lunch Break Validation
+    if (startMins < BREAK_END_MINS && startMins > BREAK_START_MINS) return false;
+    if (endMins < BREAK_END_MINS && endMins > BREAK_START_MINS) return false;
+    if (startMins < BREAK_START_MINS && endMins > BREAK_END_MINS && bookingMode === 'sameday') return false;
 
-      if (cart.length > 0) {
-        for (const ev of calendarEvents) {
-          if (isCalendarEventExpired(ev)) continue;
-          if (!['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(ev.status?.toUpperCase())) continue;
+    // Must be in the future
+    const nowPHT = new Date(new Date().toLocaleString('en-US', { timeZone: PHT }));
+    if (startD < nowPHT) return false;
 
-          const evStart = new Date(
-            ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
-          );
+    // Cart Collision Validation
+    if (cart.length > 0) {
+      for (const ev of calendarEvents) {
+        if (isCalendarEventExpired(ev)) continue;
+        if (!['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(ev.status?.toUpperCase())) continue;
 
-          const rawEnd = ev.return_deadline ?? ev.pickup_end;
-          const evEnd  = rawEnd
-            ? new Date(rawEnd)
-            : new Date(evStart.getTime() + 60 * 60_000);
+        const evStart = new Date(
+          ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time,
+        ).getTime();
 
-          if (!(slotStart < evEnd && slotEnd > evStart)) continue;
+        const rawEnd = ev.return_deadline ?? ev.pickup_end;
+        const evEnd  = rawEnd
+          ? new Date(rawEnd).getTime()
+          : evStart + 60 * 60_000;
 
-          for (const cartItem of cart) {
-            for (const evItem of ev.items ?? []) {
-              if (cartItem.inventory_mode === 'unit') {
-                if (
-                  (evItem.inventory_item_id &&
-                    String(evItem.inventory_item_id) === String(cartItem.item_id)) ||
-                  (!evItem.inventory_item_id &&
-                    String(evItem.inventory_type_id) === String(cartItem.inventory_type_id))
-                ) return false;
-              }
+        if (!(startTs < evEnd && endTs > evStart)) continue;
+
+        for (const cartItem of cart) {
+          for (const evItem of ev.items ?? []) {
+            if (cartItem.inventory_mode === 'unit') {
+              if (
+                (evItem.inventory_item_id &&
+                  String(evItem.inventory_item_id) === String(cartItem.item_id)) ||
+                (!evItem.inventory_item_id &&
+                  String(evItem.inventory_type_id) === String(cartItem.inventory_type_id))
+              ) return false;
             }
           }
         }
       }
+    }
 
-      return true;
-    },
-    [selectedDate, cart, calendarEvents],
-  );
+    return true;
+  }, [selectedDate, cart, calendarEvents, pickedWindowTs, bookingMode]);
 
-  const isItemBookedAtSlot = useCallback(
-    (item) => {
-      if (!selectedDate || !pickupTime || !duration) return false;
-      const slotStart = new Date(toISO(selectedDate, pickupTime));
-      const slotEnd   = new Date(slotStart.getTime() + duration * 60_000);
-
-      for (const b of getBookingsForItem(item)) {
-        const bStart = new Date(toISO(selectedDate, minsToTime(b.startMins)));
-        const bEnd   = new Date(toISO(selectedDate, minsToTime(b.endMins)));
-        if (slotStart < bEnd && slotEnd > bStart) return true;
-      }
-      return false;
-    },
-    [selectedDate, pickupTime, duration, getBookingsForItem],
-  );
+  const isItemBookedAtSlot = useCallback((item) => {
+    if (!pickedWindowTs) return false;
+    for (const b of getBookingsForItem(item)) {
+      if (pickedWindowTs.startTs < b.endTs && pickedWindowTs.endTs > b.startTs) return true;
+    }
+    return false;
+  }, [pickedWindowTs, getBookingsForItem]);
 
   const currentSlotOk = useMemo(
-    () => isSlotAvailable(pickupTime, duration),
-    [isSlotAvailable, pickupTime, duration],
-  );
-
-  const pickedWindow = useMemo(
-    () =>
-      pickupTime && duration
-        ? { startMins: timeToMins(pickupTime), endMins: timeToMins(pickupTime) + duration }
-        : null,
-    [pickupTime, duration],
+    () => isSlotAvailable(),
+    [isSlotAvailable],
   );
 
   const step1Done = !!selectedDate;
-  const step2Done = !!(selectedDate && pickupTime && duration && currentSlotOk);
+  const step2Done = !!(pickedWindowTs && currentSlotOk);
   const step3Done = step2Done && cart.length > 0;
-  const canSubmit  = step3Done && purpose && (purpose !== 'Other' || customPurpose.trim()) && email;
+  const canSubmit = step3Done && purpose && (purpose !== 'Other' || customPurpose.trim()) && email;
 
   // ── Cart actions ───────────────────────────────────────────────────────────
   const addToCart = useCallback(
     (item) => {
       if (isRoomClosed || item._avail <= 0) return;
 
-      if (pickupTime && duration && isItemBookedAtSlot(item)) {
+      if (pickedWindowTs && isItemBookedAtSlot(item)) {
         toast.error(
-          `${item.name}${item.barcode ? ` (${item.barcode})` : ''} is already booked at ${pickupTime}.`,
+          `${item.name}${item.barcode ? ` (${item.barcode})` : ''} is booked during this time frame.`,
         );
         return;
       }
@@ -1070,11 +1095,11 @@ export default function NewRequest() {
           if (item.inventory_mode === 'unit') return prev;
           
           let maxForSlot = item._avail;
-          if (pickedWindow) {
+          if (pickedWindowTs) {
             let overlappingQty = 0;
             const bookings = getBookingsForItem(item);
             for (const b of bookings) {
-              if (pickedWindow.startMins < b.endMins && pickedWindow.endMins > b.startMins) {
+              if (pickedWindowTs.startTs < b.endTs && pickedWindowTs.endTs > b.startTs) {
                 overlappingQty += (b.qty || 1);
               }
             }
@@ -1090,7 +1115,7 @@ export default function NewRequest() {
         return [...prev, { ...item, req_qty: 1 }];
       });
     },
-    [isRoomClosed, pickupTime, duration, isItemBookedAtSlot, getBookingsForItem, pickedWindow],
+    [isRoomClosed, pickedWindowTs, isItemBookedAtSlot, getBookingsForItem],
   );
 
   const removeFromCart = useCallback((item) => {
@@ -1108,11 +1133,11 @@ export default function NewRequest() {
       if (next <= 0) return prev.filter(c => cartKeyOf(c) !== key);
 
       let maxForSlot = item._avail;
-      if (pickedWindow) {
+      if (pickedWindowTs) {
         let overlappingQty = 0;
         const bookings = getBookingsForItem(item);
         for (const b of bookings) {
-          if (pickedWindow.startMins < b.endMins && pickedWindow.endMins > b.startMins) {
+          if (pickedWindowTs.startTs < b.endTs && pickedWindowTs.endTs > b.startTs) {
             overlappingQty += (b.qty || 1);
           }
         }
@@ -1125,12 +1150,14 @@ export default function NewRequest() {
       }
       return prev.map(c => cartKeyOf(c) === key ? { ...c, req_qty: next } : c);
     });
-  }, [pickedWindow, getBookingsForItem]);
+  }, [pickedWindowTs, getBookingsForItem]);
 
   const handleDateSelect = useCallback((dateStr) => {
     setSelectedDate(prev => prev === dateStr ? null : dateStr);
     setPickupTime('');
     setDuration(null);
+    setEndDate('');
+    setReturnTime('');
     setCart([]);
     setInventorySearch('');
   }, []);
@@ -1140,6 +1167,8 @@ export default function NewRequest() {
     setSelectedDate(null);
     setPickupTime('');
     setDuration(null);
+    setEndDate('');
+    setReturnTime('');
     setCart([]);
     setCalendarOpen(true);
     setInventory([]);
@@ -1148,7 +1177,7 @@ export default function NewRequest() {
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || !pickedWindowTs) return;
 
     const finalPurpose = purpose === 'Other' ? customPurpose.trim() : purpose;
     const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1161,7 +1190,6 @@ export default function NewRequest() {
       return;
     }
 
-    const returnTime = addMins(pickupTime, duration);
     setSubmitting(true);
 
     try {
@@ -1169,15 +1197,15 @@ export default function NewRequest() {
         room_id: selectedRoomId,
         purpose: finalPurpose,
         email: email.trim(),
-        pickup_datetime:  toISO(selectedDate, pickupTime),
-        return_deadline:  toISO(selectedDate, returnTime),
+        pickup_datetime:  new Date(pickedWindowTs.startTs).toISOString(),
+        return_deadline:  new Date(pickedWindowTs.endTs).toISOString(),
         items: cart.map(c => ({
           inventory_type_id: c.inventory_type_id,
           quantity:          c.req_qty,
           qty_requested:     c.req_qty,
           ...(c.inventory_mode === 'unit'       && { inventory_item_id: c.item_id }),
           ...(c.inventory_mode === 'quantity'   && { stock_id: c.stock_id ?? c.id }),
-          ...(c.kind === 'consumable'            && { consumable_id: c.consumable_id ?? c.id }),
+          ...(c.kind === 'consumable'           && { consumable_id: c.consumable_id ?? c.id }),
         })),
       };
 
@@ -1192,13 +1220,13 @@ export default function NewRequest() {
     }
   }, [
     canSubmit, purpose, customPurpose, email, currentSlotOk,
-    pickupTime, duration, selectedDate, selectedRoomId, cart,
-    fetchInventory, fetchCalendarEvents,
+    pickedWindowTs, selectedRoomId, cart, fetchInventory, fetchCalendarEvents,
   ]);
 
   const cartTotalItems = cart.reduce((s, c) => s + c.req_qty, 0);
 
-  const returnTimeDisplay = step2Done ? addMins(pickupTime, duration) : null;
+  const returnTimeDisplay = pickedWindowTs ? fmtTime(new Date(pickedWindowTs.endTs)) : null;
+  const returnDateDisplay = pickedWindowTs ? fmtDateShort(new Date(pickedWindowTs.endTs).toISOString().split('T')[0]) : null;
 
   return (
     <div className="flex flex-col h-[calc(100dvh-4rem)] bg-white overflow-hidden relative">
@@ -1269,7 +1297,7 @@ export default function NewRequest() {
                   <StepBadge step="1" complete={step1Done} locked={false} />
                   <CalendarDays size={13} className={step1Done ? 'text-emerald-600' : 'text-gray-500'} />
                   <span className={`text-xs font-black uppercase tracking-wider ${step1Done ? 'text-emerald-700' : 'text-gray-700'}`}>
-                    Pick a date
+                    Pick a Start Date
                   </span>
                 </div>
                 <div className="px-4 pb-4">
@@ -1311,7 +1339,7 @@ export default function NewRequest() {
                   onClick={() => setCalendarOpen(true)}
                   className="text-xs font-bold text-gray-400 hover:text-primary bg-gray-100 hover:bg-primary/10 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap flex-shrink-0"
                 >
-                  Change
+                  Change Start Date
                 </button>
               </div>
             )}
@@ -1324,13 +1352,13 @@ export default function NewRequest() {
                     <Timer size={13} className={step2Done ? 'text-emerald-600 flex-shrink-0' : 'text-gray-500 flex-shrink-0'} />
                     <span className={`text-xs font-black uppercase tracking-wide truncate ${step2Done ? 'text-emerald-700' : 'text-gray-700'}`}>
                       {step2Done
-                        ? `${pickupTime} – ${returnTimeDisplay} · ${DURATION_OPTIONS.find(o => o.mins === duration)?.label}`
-                        : 'Pick a time slot'}
+                        ? `${pickupTime} – ${returnTimeDisplay} ${bookingMode === 'multiday' ? `(${returnDateDisplay})` : ''}`
+                        : 'Pick a timeframe'}
                     </span>
                   </div>
                   {step2Done && (
                     <button
-                      onClick={() => { setPickupTime(''); setDuration(null); setCart([]); }}
+                      onClick={() => { setPickupTime(''); setDuration(null); setEndDate(''); setReturnTime(''); setCart([]); }}
                       className="ml-2 text-xs font-bold text-gray-400 hover:text-primary bg-gray-100 hover:bg-primary/10 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
                     >
                       Change
@@ -1341,12 +1369,28 @@ export default function NewRequest() {
                 {!step2Done && (
                   <div className="px-4 pb-4 space-y-4">
 
+                    {/* Booking Mode Toggle */}
+                    <div className="flex p-1 bg-gray-100 rounded-xl">
+                      <button
+                        onClick={() => { setBookingMode('sameday'); setDuration(null); setEndDate(''); setReturnTime(''); }}
+                        className={`flex-1 py-2 text-xs font-black rounded-lg transition-all ${bookingMode === 'sameday' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                      >
+                        Same Day Return
+                      </button>
+                      <button
+                        onClick={() => { setBookingMode('multiday'); setDuration(null); setEndDate(''); setReturnTime(''); }}
+                        className={`flex-1 py-2 text-xs font-black rounded-lg transition-all flex items-center justify-center gap-1.5 ${bookingMode === 'multiday' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                      >
+                        <CalendarRange size={14} /> Multi-Day
+                      </button>
+                    </div>
+
                     {allDayBookings.length > 0 && (
                       <div>
                         <p className="text-[10px] font-bold text-gray-500 mb-1.5">
-                          Room bookings today (7 AM – 8 PM):
+                          Room bookings on {fmtDateShort(selectedDate)}:
                         </p>
-                        <TimelineBar bookings={allDayBookings} pickedWindow={pickedWindow} />
+                        <TimelineBar bookings={allDayBookings} pickedWindow={visualPickedWindow} />
                         <div className="flex justify-between text-[9px] text-gray-400 mt-0.5 px-0.5 font-medium">
                           <span>7 AM</span>
                           <span className="hidden sm:inline">10 AM</span>
@@ -1366,39 +1410,45 @@ export default function NewRequest() {
                       </div>
                     )}
 
-                    <div>
-                      <label
-                        htmlFor="pickup-time"
-                        className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide"
-                      >
-                        Start time
-                      </label>
-                      <div className="relative">
-                        <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                        <input
-                          id="pickup-time"
-                          type="time"
-                          min="07:00"
-                          max="19:50"
-                          value={pickupTime}
-                          onChange={e => {
-                            setPickupTime(e.target.value);
-                            setDuration(null);
-                          }}
-                          className="w-full bg-slate-50 border border-black/10 focus:border-primary rounded-xl pl-9 pr-3 py-3 text-sm font-black text-gray-800 outline-none transition-colors"
-                        />
+                    <div className="flex gap-4">
+                      <div className="flex-1">
+                        <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">
+                          Pickup Time
+                        </label>
+                        <div className="relative">
+                          <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                          <input
+                            type="time"
+                            min="07:00"
+                            max="19:50"
+                            value={pickupTime}
+                            onChange={e => {
+                              setPickupTime(e.target.value);
+                              setDuration(null);
+                            }}
+                            className="w-full bg-slate-50 border border-black/10 focus:border-primary rounded-xl pl-9 pr-3 py-3 text-sm font-black text-gray-800 outline-none transition-colors"
+                          />
+                        </div>
                       </div>
                     </div>
 
-                    {pickupTime && (
+                    {pickupTime && bookingMode === 'sameday' && (
                       <div>
                         <p className="text-[10px] font-bold text-gray-600 mb-2 uppercase tracking-wide">
                           Duration
                         </p>
                         <div className="flex flex-wrap gap-2">
                           {DURATION_OPTIONS.map(opt => {
-                            const valid = isSlotAvailable(pickupTime, opt.mins);
-                            const sel   = duration === opt.mins;
+                            const tmpEnd = new Date(new Date(toISO(selectedDate, pickupTime)).getTime() + opt.mins * 60000);
+                            const tHour = tmpEnd.getHours();
+                            const tMin = tmpEnd.getMinutes();
+                            
+                            // Basic Intraday Validations
+                            let valid = true;
+                            if (tHour >= 20 && tMin > 0) valid = false; // Post 8 PM
+                            if (timeToMins(pickupTime) < BREAK_END_MINS && (timeToMins(pickupTime) + opt.mins) > BREAK_START_MINS) valid = false; // Lunch
+
+                            const sel = duration === opt.mins;
                             return (
                               <button
                                 key={opt.mins}
@@ -1420,7 +1470,40 @@ export default function NewRequest() {
                       </div>
                     )}
 
-                    {pickupTime && duration && (
+                    {pickupTime && bookingMode === 'multiday' && (
+                      <div className="grid grid-cols-2 gap-4 border-t border-black/5 pt-4 mt-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">
+                            Return Date
+                          </label>
+                          <input
+                            type="date"
+                            min={selectedDate}
+                            value={endDate}
+                            onChange={e => setEndDate(e.target.value)}
+                            className="w-full bg-slate-50 border border-black/10 focus:border-primary rounded-xl px-3 py-3 text-sm font-black text-gray-800 outline-none transition-colors"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">
+                            Return Time
+                          </label>
+                          <div className="relative">
+                            <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                            <input
+                              type="time"
+                              min="07:00"
+                              max="19:50"
+                              value={returnTime}
+                              onChange={e => setReturnTime(e.target.value)}
+                              className="w-full bg-slate-50 border border-black/10 focus:border-primary rounded-xl pl-9 pr-3 py-3 text-sm font-black text-gray-800 outline-none transition-colors"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {pickedWindowTs && (
                       <div
                         className={`text-xs font-bold px-4 py-3 rounded-xl flex items-start gap-2.5 transition-all leading-relaxed
                           ${currentSlotOk
@@ -1431,16 +1514,14 @@ export default function NewRequest() {
                           <>
                             <Check size={16} className="shrink-0 mt-0.5" />
                             <span>
-                              {pickupTime} – {addMins(pickupTime, duration)} looks free. Add items below to continue.
+                              Timeframe valid. Browse equipment below to continue.
                             </span>
                           </>
                         ) : (
                           <>
                             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
                             <span>
-                              {timeToMins(pickupTime) < BREAK_END_MINS && (timeToMins(pickupTime) + duration) > BREAK_START_MINS 
-                                ? 'Reservations are closed during the 11:30 AM – 1:00 PM lunch break.'
-                                : 'Conflict detected. Try a different start time or duration.'}
+                              Time conflict detected. Ensure times are within 7 AM - 8 PM and outside the 11:30 AM - 1:00 PM lunch break. End dates must occur after start dates.
                             </span>
                           </>
                         )}
@@ -1454,7 +1535,7 @@ export default function NewRequest() {
                     <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-2">
                       <CheckCircle size={14} className="text-emerald-600 flex-shrink-0" />
                       <span className="text-xs font-bold text-emerald-700">
-                        {pickupTime} – {returnTimeDisplay} · {fmtDateShort(selectedDate)} · Slot confirmed
+                        Timeframe confirmed
                       </span>
                     </div>
                   </div>
@@ -1478,10 +1559,10 @@ export default function NewRequest() {
                     <div className="bg-gray-50 rounded-xl border border-dashed border-gray-200 py-6 px-4 text-center">
                       <Lock size={24} className="text-gray-300 mx-auto mb-2" />
                       <p className="text-xs font-bold text-gray-400">
-                        Set your time slot above to browse equipment.
+                        Set your timeframe above to browse equipment.
                       </p>
                       <p className="text-[11px] text-gray-300 mt-1">
-                        Each item will show real-time availability for your selected time.
+                        Each item will show real-time availability for your selected window.
                       </p>
                     </div>
                   </div>
@@ -1518,7 +1599,7 @@ export default function NewRequest() {
                         <span className="w-3 h-2 rounded-sm bg-gray-200 inline-block" />Free
                       </span>
                       <span className="text-gray-300 w-full sm:w-auto sm:ml-auto text-right">
-                        7 AM – 8 PM
+                        Timeline view limited to current selected day
                       </span>
                     </div>
 
@@ -1542,7 +1623,8 @@ export default function NewRequest() {
                             key={group.name}
                             group={group}
                             cart={cart}
-                            pickedWindow={pickedWindow}
+                            pickedWindowTs={pickedWindowTs}
+                            visualPickedWindow={visualPickedWindow}
                             step2Done={step2Done}
                             isItemBookedAtSlot={isItemBookedAtSlot}
                             getBookingsForGroup={getBookingsForGroup}
@@ -1645,7 +1727,7 @@ export default function NewRequest() {
                     <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3.5 flex items-start gap-2.5">
                       <AlertTriangle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
                       <p className="text-xs font-bold text-red-600 leading-relaxed">
-                        One or more items in your cart have a conflict at {pickupTime}.
+                        One or more items in your cart have a conflict during your selected timeframe.
                         Remove the conflicting item or change your time slot above.
                       </p>
                     </div>
@@ -1668,7 +1750,7 @@ export default function NewRequest() {
                       {cart.length === 0
                         ? 'Add at least one item from the catalog above'
                         : !currentSlotOk
-                          ? '⚠ Time conflict — change your slot or remove the conflicting item'
+                          ? '⚠ Time conflict — change your timeframe or remove the conflicting item'
                           : !purpose
                             ? 'Select a purpose for this request'
                             : purpose === 'Other' && !customPurpose.trim()
@@ -1694,13 +1776,13 @@ export default function NewRequest() {
                       </p>
                       <p className="text-[10px] text-gray-400 mt-1 truncate">
                         {step2Done
-                          ? `${pickupTime} – ${returnTimeDisplay} · ${fmtDateShort(selectedDate)}`
+                          ? `${pickupTime} – ${returnTimeDisplay} ${bookingMode === 'multiday' ? `(${returnDateDisplay})` : ''}`
                           : 'Set a time slot first'}
                       </p>
                     </>
                   ) : (
                     <p className="text-sm text-gray-400 font-medium">
-                      {step2Done ? 'Add items from the catalog' : 'Set a time slot first'}
+                      {step2Done ? 'Add items from the catalog' : 'Set a timeframe first'}
                     </p>
                   )}
                 </div>
