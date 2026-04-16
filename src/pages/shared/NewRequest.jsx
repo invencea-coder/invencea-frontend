@@ -130,19 +130,18 @@ const isCalendarEventExpired = (ev) => {
     return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
   }
   if (ev.pickup_start) {
-    const e = new Date(ev.pickup_start);
+    const e = new Date(ev.pickup_start); 
     e.setHours(23, 59, 59, 999);
     return now > e.getTime();
   }
   if (ev.created_at) {
-    const e = new Date(ev.created_at);
+    const e = new Date(ev.created_at); 
     e.setHours(23, 59, 59, 999);
     return now > e.getTime();
   }
   return false;
 };
 
-// Extractor to clamp global timestamps into visual minute ranges for a specific viewed date
 const clampToDayMins = (dateStr, tsStart, tsEnd) => {
   const dayStartTs = new Date(`${dateStr}T00:00:00+08:00`).getTime();
   const dayEndTs   = new Date(`${dateStr}T23:59:59+08:00`).getTime();
@@ -155,12 +154,8 @@ const clampToDayMins = (dateStr, tsStart, tsEnd) => {
   const startD = new Date(cStart);
   const endD   = new Date(cEnd);
 
-  const stMins =
-    parseInt(dateToPHTTime(startD)?.split(':')[0] || 0) * 60 +
-    parseInt(dateToPHTTime(startD)?.split(':')[1] || 0);
-  const enMins =
-    parseInt(dateToPHTTime(endD)?.split(':')[0] || 0) * 60 +
-    parseInt(dateToPHTTime(endD)?.split(':')[1] || 0);
+  const stMins = parseInt(dateToPHTTime(startD)?.split(':')[0] || 0) * 60 + parseInt(dateToPHTTime(startD)?.split(':')[1] || 0);
+  const enMins = parseInt(dateToPHTTime(endD)?.split(':')[0] || 0) * 60 + parseInt(dateToPHTTime(endD)?.split(':')[1] || 0);
 
   return { startMins: stMins, endMins: enMins };
 };
@@ -400,14 +395,14 @@ const InventoryGroupCard = memo(({
   const [expanded, setExpanded] = useState(false);
 
   const isSingleUnit = group.items.length === 1 && group.inventory_mode === 'unit';
-  const isFungible   = group.inventory_mode !== 'unit';
+  const isFungible   = group.inventory_mode !== 'unit'; 
 
   const cartEntries = useMemo(
     () => cart.filter(c => c.name === group.name),
     [cart, group.name],
   );
   const cartTotalQty = cartEntries.reduce((s, c) => s + c.req_qty, 0);
-  const cartCount    = cartEntries.length;
+  const cartCount    = cartEntries.length; 
 
   const bookings       = getBookingsForGroup(group);
   const visualBookings = bookings.filter(b => b.startMins != null);
@@ -437,10 +432,10 @@ const InventoryGroupCard = memo(({
   const poolInCart = poolItem ? cart.find(c => cartKeyOf(c) === cartKeyOf(poolItem)) : null;
 
   const handleGroupClick = () => {
-    if (isFungible) return;
+    if (isFungible) return; 
     if (fullyUnavail) return;
     if (isSingleUnit) {
-      const item     = group.items[0];
+      const item      = group.items[0];
       const alreadyIn = cart.some(c => cartKeyOf(c) === cartKeyOf(item));
       if (alreadyIn) onRemove(item);
       else onAdd(item);
@@ -643,9 +638,9 @@ const InventoryGroupCard = memo(({
 
           <div className="space-y-2">
             {group.items.map((item) => {
-              const itemBookings  = getBookingsForItem(item);
-              const bookedAtSlot  = step2Done && isItemBookedAtSlot(item);
-              const alreadyInCart = inCartForItem(item);
+              const itemBookings   = getBookingsForItem(item);
+              const bookedAtSlot   = step2Done && isItemBookedAtSlot(item);
+              const alreadyInCart  = inCartForItem(item);
 
               return (
                 <InventoryUnitRow
@@ -677,7 +672,7 @@ export default function NewRequest() {
 
   const initialRoom = useMemo(
     () => (user?.room_id && user.room_id !== 'null' ? String(user.room_id) : ''),
-    [],
+    [], 
   );
 
   const submitRef = useRef(null);
@@ -805,10 +800,10 @@ export default function NewRequest() {
       }
     });
 
-    return () => {
-      setTimeout(() => socket.disconnect(), 100);
+    return () => { 
+      setTimeout(() => socket.disconnect(), 100); 
     };
-  }, []);
+  }, []); 
 
   // Re-fetch when date changes
   useEffect(() => {
@@ -864,10 +859,10 @@ export default function NewRequest() {
   }, [filteredInventory]);
 
   // ── ⚡ MULTI-DAY TIME RESOLVERS ──────────────────────────────────────────
-
+  
   const pickedWindowTs = useMemo(() => {
     if (!selectedDate || !pickupTime) return null;
-
+    
     const startD  = new Date(toISO(selectedDate, pickupTime));
     const startTs = startD.getTime();
 
@@ -890,6 +885,14 @@ export default function NewRequest() {
     if (!pickedWindowTs || !selectedDate) return null;
     return clampToDayMins(selectedDate, pickedWindowTs.startTs, pickedWindowTs.endTs);
   }, [pickedWindowTs, selectedDate]);
+
+  const minMultiDate = useMemo(() => {
+    if (!selectedDate) return '';
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const nextDay = new Date(y, m - 1, d + 1);
+    const pad = n => String(n).padStart(2, '0');
+    return `${nextDay.getFullYear()}-${pad(nextDay.getMonth() + 1)}-${pad(nextDay.getDate())}`;
+  }, [selectedDate]);
 
   // ── Booking windows helpers ────────────────────────────────────────────────
   const getBookingsForItem = useCallback(
@@ -914,10 +917,8 @@ export default function NewRequest() {
         let qtyInEv = 0;
         const matches = (ev.items ?? []).some(evItem => {
           if (item.inventory_mode === 'unit') {
-            if (
-              (evItem.inventory_item_id && String(evItem.inventory_item_id) === String(item.item_id)) ||
-              (!evItem.inventory_item_id && String(evItem.inventory_type_id) === String(item.inventory_type_id))
-            ) {
+            if ((evItem.inventory_item_id && String(evItem.inventory_item_id) === String(item.item_id)) ||
+                (!evItem.inventory_item_id && String(evItem.inventory_type_id) === String(item.inventory_type_id))) {
               qtyInEv = 1; return true;
             }
           } else if (item.kind === 'consumable') {
@@ -941,10 +942,10 @@ export default function NewRequest() {
         results.push({
           startTs:   stTs,
           endTs:     enTs,
-          startMins: visualClamp?.startMins,
+          startMins: visualClamp?.startMins, 
           endMins:   visualClamp?.endMins,
           label:     `${fmtDateShort(evStart.toISOString().split('T')[0])} ${fmtTime(evStart)}`,
-          qty:       qtyInEv,
+          qty:       qtyInEv
         });
       }
       return results;
@@ -967,7 +968,7 @@ export default function NewRequest() {
     [getBookingsForItem],
   );
 
-  // ── isItemBookedAtSlot — defined HERE, before anything that depends on it ──
+  // ⚡ CRITICAL HELPER: DEFINED BEFORE USE
   const isItemBookedAtSlot = useCallback(
     (item) => {
       if (!pickedWindowTs) return false;
@@ -976,7 +977,7 @@ export default function NewRequest() {
       }
       return false;
     },
-    [pickedWindowTs, getBookingsForItem],
+    [pickedWindowTs, getBookingsForItem]
   );
 
   const allDayBookings = useMemo(() => {
@@ -1016,29 +1017,25 @@ export default function NewRequest() {
     const startD = new Date(startTs);
     const endD   = new Date(endTs);
 
-    // Past-time check using absolute epoch timestamps
     if (startTs < Date.now()) return 'Pickup time cannot be in the past.';
 
-    // Business Hours Validation (7 AM to 8 PM)
+    if (bookingMode === 'multiday' && selectedDate === endDate) {
+      return 'Multi-day bookings must return on a future date. Use "Same Day Return" instead.';
+    }
+
     const phtStartHour = parseInt(dateToPHTTime(startD)?.split(':')[0] || 0);
     const phtEndHour   = parseInt(dateToPHTTime(endD)?.split(':')[0]   || 0);
-
-    if (phtStartHour < 7 || phtStartHour >= 20)
-      return 'Pickup time must be within business hours (7:00 AM - 8:00 PM).';
-    if (phtEndHour < 7 || (phtEndHour >= 20 && dateToPHTTime(endD)?.split(':')[1] !== '00'))
-      return 'Return time must be within business hours (7:00 AM - 8:00 PM).';
+    
+    if (phtStartHour < 7 || phtStartHour >= 20) return 'Pickup time must be within business hours (7:00 AM - 8:00 PM).';
+    if (phtEndHour < 7 || (phtEndHour >= 20 && dateToPHTTime(endD)?.split(':')[1] !== '00')) return 'Return time must be within business hours (7:00 AM - 8:00 PM).';
 
     const startMins = timeToMins(dateToPHTTime(startD));
     const endMins   = timeToMins(dateToPHTTime(endD));
 
-    if (startMins < BREAK_END_MINS && startMins >= BREAK_START_MINS)
-      return 'Pickup time cannot be during the lunch break (11:30 AM - 1:00 PM).';
-    if (endMins <= BREAK_END_MINS && endMins > BREAK_START_MINS)
-      return 'Return time cannot be during the lunch break (11:30 AM - 1:00 PM).';
-    if (startMins < BREAK_START_MINS && endMins > BREAK_END_MINS && bookingMode === 'sameday')
-      return 'Same-day bookings cannot span across the lunch break. Please split into two bookings.';
+    if (startMins < BREAK_END_MINS && startMins >= BREAK_START_MINS) return 'Pickup time cannot be during the lunch break (11:30 AM - 1:00 PM).';
+    if (endMins <= BREAK_END_MINS && endMins > BREAK_START_MINS) return 'Return time cannot be during the lunch break (11:30 AM - 1:00 PM).';
+    if (startMins < BREAK_START_MINS && endMins > BREAK_END_MINS && bookingMode === 'sameday') return 'Same-day bookings cannot span across the lunch break. Please split into two bookings.';
 
-    // Cart Collision Validation
     if (cart.length > 0) {
       for (const ev of calendarEvents) {
         if (isCalendarEventExpired(ev)) continue;
@@ -1049,7 +1046,9 @@ export default function NewRequest() {
         ).getTime();
 
         const rawEnd = ev.return_deadline ?? ev.pickup_end;
-        const evEnd  = rawEnd ? new Date(rawEnd).getTime() : evStart + 60 * 60_000;
+        const evEnd  = rawEnd
+          ? new Date(rawEnd).getTime()
+          : evStart + 60 * 60_000;
 
         if (!(startTs < evEnd && endTs > evStart)) continue;
 
@@ -1068,8 +1067,8 @@ export default function NewRequest() {
       }
     }
 
-    return null; // Valid!
-  }, [selectedDate, cart, calendarEvents, pickedWindowTs, bookingMode]);
+    return null;
+  }, [selectedDate, cart, calendarEvents, pickedWindowTs, bookingMode, endDate]);
 
   const currentSlotOk = !slotError;
 
@@ -1100,7 +1099,7 @@ export default function NewRequest() {
             }
           }
           maxForSlot = Math.max(0, item._avail - overlappingQty);
-
+          
           if (maxForSlot <= 0) {
             toast.error(`${item.name} is fully booked during this time frame.`);
             return;
@@ -1112,8 +1111,8 @@ export default function NewRequest() {
       setCart(prev => {
         const existing = prev.find(c => cartKeyOf(c) === key);
         if (existing) {
-          if (item.inventory_mode === 'unit') return prev;
-
+          if (item.inventory_mode === 'unit') return prev; 
+          
           if (existing.req_qty >= maxForSlot) {
             setTimeout(() => toast.error(`Only ${maxForSlot} available during this time slot.`), 0);
             return prev;
@@ -1317,7 +1316,7 @@ export default function NewRequest() {
                       roomId={selectedRoomId}
                       onDateSelect={handleDateSelect}
                       selectedDate={selectedDate}
-                      publicMode={true}
+                      publicMode={true} 
                       catalogNode={
                         selectedDate ? (
                           <div className="p-4 mt-auto sticky bottom-0 bg-white border-t border-gray-200 z-10 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)]">
@@ -1450,10 +1449,10 @@ export default function NewRequest() {
                         </p>
                         <div className="flex flex-wrap gap-2">
                           {DURATION_OPTIONS.map(opt => {
-                            const tmpEnd  = new Date(new Date(toISO(selectedDate, pickupTime)).getTime() + opt.mins * 60000);
-                            const tHour   = tmpEnd.getHours();
-                            const tMin    = tmpEnd.getMinutes();
-
+                            const tmpEnd = new Date(new Date(toISO(selectedDate, pickupTime)).getTime() + opt.mins * 60000);
+                            const tHour = tmpEnd.getHours();
+                            const tMin = tmpEnd.getMinutes();
+                            
                             let valid = true;
                             if (tHour >= 20 && tMin > 0) valid = false;
                             if (timeToMins(pickupTime) < BREAK_END_MINS && (timeToMins(pickupTime) + opt.mins) > BREAK_START_MINS) valid = false;
@@ -1488,7 +1487,7 @@ export default function NewRequest() {
                           </label>
                           <input
                             type="date"
-                            min={selectedDate}
+                            min={minMultiDate}
                             value={endDate}
                             onChange={e => setEndDate(e.target.value)}
                             className="w-full bg-slate-50 border border-black/10 focus:border-primary rounded-xl px-3 py-3 text-sm font-black text-gray-800 outline-none transition-colors"
@@ -1523,12 +1522,16 @@ export default function NewRequest() {
                         {currentSlotOk ? (
                           <>
                             <Check size={16} className="shrink-0 mt-0.5" />
-                            <span>Timeframe valid. Browse equipment below to continue.</span>
+                            <span>
+                              Timeframe valid. Browse equipment below to continue.
+                            </span>
                           </>
                         ) : (
                           <>
                             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                            <span>{slotError}</span>
+                            <span>
+                              {slotError}
+                            </span>
                           </>
                         )}
                       </div>
