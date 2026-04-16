@@ -997,31 +997,30 @@ export default function NewRequest() {
   }, [selectedDate, calendarEvents]);
 
   // ── Availability checks ────────────────────────────────────────────────────
-  const isSlotAvailable = useCallback(() => {
-    if (!pickedWindowTs || !selectedDate) return false;
+  const slotError = useMemo(() => {
+    if (!pickedWindowTs || !selectedDate) return 'Incomplete timeframe';
 
     const { startTs, endTs } = pickedWindowTs;
     const startD = new Date(startTs);
     const endD = new Date(endTs);
 
+    // ⚡ FIX 1: Universal "Past Time" check using absolute epoch timestamps (No timezone bugs)
+    if (startTs < Date.now()) return 'Pickup time cannot be in the past.';
+
     // Business Hours Validation (7 AM to 8 PM)
     const phtStartHour = parseInt(dateToPHTTime(startD)?.split(':')[0] || 0);
     const phtEndHour = parseInt(dateToPHTTime(endD)?.split(':')[0] || 0);
     
-    if (phtStartHour < 7 || phtStartHour >= 20) return false;
-    if (phtEndHour < 7 || (phtEndHour >= 20 && dateToPHTTime(endD)?.split(':')[1] !== '00')) return false;
+    if (phtStartHour < 7 || phtStartHour >= 20) return 'Pickup time must be within business hours (7:00 AM - 8:00 PM).';
+    if (phtEndHour < 7 || (phtEndHour >= 20 && dateToPHTTime(endD)?.split(':')[1] !== '00')) return 'Return time must be within business hours (7:00 AM - 8:00 PM).';
 
     const startMins = timeToMins(dateToPHTTime(startD));
     const endMins = timeToMins(dateToPHTTime(endD));
 
-    // Lunch Break Validation
-    if (startMins < BREAK_END_MINS && startMins > BREAK_START_MINS) return false;
-    if (endMins < BREAK_END_MINS && endMins > BREAK_START_MINS) return false;
-    if (startMins < BREAK_START_MINS && endMins > BREAK_END_MINS && bookingMode === 'sameday') return false;
-
-    // Must be in the future
-    const nowPHT = new Date(new Date().toLocaleString('en-US', { timeZone: PHT }));
-    if (startD < nowPHT) return false;
+    // ⚡ FIX 2: Strict Lunch Break Boundaries (>= and <=)
+    if (startMins < BREAK_END_MINS && startMins >= BREAK_START_MINS) return 'Pickup time cannot be during the lunch break (11:30 AM - 1:00 PM).';
+    if (endMins <= BREAK_END_MINS && endMins > BREAK_START_MINS) return 'Return time cannot be during the lunch break (11:30 AM - 1:00 PM).';
+    if (startMins < BREAK_START_MINS && endMins > BREAK_END_MINS && bookingMode === 'sameday') return 'Same-day bookings cannot span across the lunch break. Please split into two bookings.';
 
     // Cart Collision Validation
     if (cart.length > 0) {
@@ -1048,28 +1047,17 @@ export default function NewRequest() {
                   String(evItem.inventory_item_id) === String(cartItem.item_id)) ||
                 (!evItem.inventory_item_id &&
                   String(evItem.inventory_type_id) === String(cartItem.inventory_type_id))
-              ) return false;
+              ) return `Cart conflict: ${cartItem.name} is already booked during this time.`;
             }
           }
         }
       }
     }
 
-    return true;
+    return null; // Valid!
   }, [selectedDate, cart, calendarEvents, pickedWindowTs, bookingMode]);
 
-  const isItemBookedAtSlot = useCallback((item) => {
-    if (!pickedWindowTs) return false;
-    for (const b of getBookingsForItem(item)) {
-      if (pickedWindowTs.startTs < b.endTs && pickedWindowTs.endTs > b.startTs) return true;
-    }
-    return false;
-  }, [pickedWindowTs, getBookingsForItem]);
-
-  const currentSlotOk = useMemo(
-    () => isSlotAvailable(),
-    [isSlotAvailable],
-  );
+  const currentSlotOk = !slotError;
 
   const step1Done = !!selectedDate;
   const step2Done = !!(pickedWindowTs && currentSlotOk);
@@ -1533,7 +1521,7 @@ export default function NewRequest() {
                           <>
                             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
                             <span>
-                              Time conflict detected. Ensure times are within 7 AM - 8 PM and outside the 11:30 AM - 1:00 PM lunch break. End dates must occur after start dates.
+                              {slotError}
                             </span>
                           </>
                         )}
