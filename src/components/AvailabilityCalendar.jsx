@@ -4,6 +4,33 @@ import { format } from "date-fns";
 import { X, Clock, Package, ListTodo } from "lucide-react";
 import api from "../api/axiosClient";
 
+const isCalendarEventExpired = (ev) => {
+  const status = String(ev.status || ev.request_status || '').toUpperCase();
+  // Active issuances are never expired
+  if (['ISSUED', 'PARTIALLY RETURNED'].includes(status)) return false;
+  
+  const now = Date.now();
+  
+  // 15 minute grace period for scheduled pickups
+  if (ev.pickup_datetime) {
+    return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
+  }
+  if (ev.scheduled_time) {
+    return now > new Date(ev.scheduled_time).getTime() + 15 * 60_000;
+  }
+  if (ev.pickup_start) {
+    const e = new Date(ev.pickup_start); 
+    e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  if (ev.created_at) {
+    const e = new Date(ev.created_at); 
+    e.setHours(23, 59, 59, 999);
+    return now > e.getTime();
+  }
+  return false;
+};
+
 const STATUS = {
   APPROVED:           { label: "Reserved",       dot: "#BA7517", barBg: "#FAEEDA", barBorder: "#EF9F27", barText: "#633806" },
   ISSUED:             { label: "Issued",         dot: "#185FA5", barBg: "#E6F1FB", barBorder: "#378ADD", barText: "#042C53" },
@@ -83,10 +110,13 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
       const res = await api.get('/requests/calendar', { params: { room_id: roomId } });
       const fetchedData = Array.isArray(res.data.data) ? res.data.data : [];
       
-      // ⚡ STRICT WHITELIST: Only keep bookings that are actively taking up space
+      // ⚡ DYNAMIC FILTER: Keep active statuses AND drop them if their 15-min grace period passed
       const validEvents = fetchedData.filter(ev => {
         const status = String(ev.status || ev.request_status || '').toUpperCase();
-        return ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(status);
+        const isWhitelisted = ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(status);
+        
+        // Return true ONLY if it's a valid status AND it hasn't expired yet!
+        return isWhitelisted && !isCalendarEventExpired(ev);
       });
 
       setEvents(validEvents);
