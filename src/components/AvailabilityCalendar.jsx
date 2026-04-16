@@ -81,7 +81,15 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
     setLoading(true); setError(null);
     try {
       const res = await api.get('/requests/calendar', { params: { room_id: roomId } });
-      setEvents(Array.isArray(res.data.data) ? res.data.data : []);
+      const fetchedData = Array.isArray(res.data.data) ? res.data.data : [];
+      
+      // ⚡ THE FIX: Filter out any requests that shouldn't block the calendar
+      const validEvents = fetchedData.filter(ev => {
+        const status = String(ev.status || ev.request_status || '').toUpperCase();
+        return !['VOID', 'VOIDED', 'CANCELLED', 'REJECTED', 'RETURNED'].includes(status);
+      });
+
+      setEvents(validEvents);
     } catch (err) {
       setError(err.response?.data?.message || err.message || 'Failed to load');
     } finally {
