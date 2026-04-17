@@ -118,11 +118,15 @@ const getTimeRange = (r) => {
   return `Until ${fmtTime(end)}`;
 };
 
+// ⚡ FIX: Added scheduled_time to expiration grace period logic
 const isExpiredRow = (r) => {
   if (!['PENDING', 'APPROVED', 'PENDING APPROVAL'].includes(r.status?.toUpperCase())) return false;
   const now = Date.now();
   if (r.pickup_datetime) {
     return now > toPHTime(r.pickup_datetime).getTime() + 15 * 60_000;
+  }
+  if (r.scheduled_time) {
+    return now > toPHTime(r.scheduled_time).getTime() + 15 * 60_000;
   }
   if (r.pickup_start) {
     const e = toPHTime(r.pickup_start); e.setHours(23, 59, 59, 999);
@@ -140,8 +144,8 @@ const getRequestUrgency = (req) => {
   const now = Date.now();
 
   if (['PENDING', 'APPROVED', 'PENDING APPROVAL'].includes(req.status)) {
-    if (req.pickup_datetime) {
-      const start = toPHTime(req.pickup_datetime).getTime();
+    if (req.pickup_datetime || req.scheduled_time) {
+      const start = toPHTime(req.pickup_datetime || req.scheduled_time).getTime();
       const expiresAt = start + 15 * 60_000; 
       if (now >= start && now <= expiresAt) return 'pickup_active';
       if (now > expiresAt) return 'void';
@@ -188,10 +192,13 @@ const STATUS_TEXT_CLS = {
   'PENDING APPROVAL': 'text-amber-800',
   overdue:            'text-red-800',
   'PARTIALLY RETURNED': 'text-orange-800',
-  VOIDED:             'text-red-800', // ⚡ Added
+  VOIDED:             'text-red-800',
 };
 
 const ALL_TABS = ['PENDING', 'APPROVED', 'ISSUED', 'OVERDUE', 'ARCHIVED'];
+
+// ⚡ FIX: Helper to prevent PostgreSQL errors when sending temporary UI IDs to the backend
+const getSafeId = (id) => (typeof id === 'string' && (id.startsWith('new-') || id.startsWith('tmp-') || id.startsWith('split-'))) ? null : id;
 
 function QrCameraScanner({ onResult }) {
   const mountedRef  = useRef(true);
@@ -269,7 +276,7 @@ function DeadlineBadge({ req, compact = false }) {
   let minsLeft = 0;
 
   if (['pickup_active', 'void'].includes(urgency)) {
-    let start = req.pickup_datetime ? toPHTime(req.pickup_datetime).getTime() : toPHTime(req.created_at).getTime();
+    let start = (req.pickup_datetime || req.scheduled_time) ? toPHTime(req.pickup_datetime || req.scheduled_time).getTime() : toPHTime(req.created_at).getTime();
     const expiresAt = start + 15 * 60_000;
     minsLeft = Math.ceil((expiresAt - now) / 60_000);
   } else {
@@ -487,7 +494,6 @@ export default function AdminRequests() {
   const [adjustedItems,  setAdjustedItems]  = useState([]);
   const [itemSearch,     setItemSearch]     = useState('');
   
-  // Separate states for the Issue Modal (pre-approved requests)
   const [issueDate,      setIssueDate]      = useState('');
   const [issueTime,      setIssueTime]      = useState('');
   const [timeToOpen,     setTimeToOpen]     = useState(null); 
@@ -495,7 +501,6 @@ export default function AdminRequests() {
 
   const [approveReq, setApproveReq] = useState(null);
 
-  // Dedicated state for Walk-In modal
   const [manualForm,      setManualForm]      = useState({
     studentId: '', purpose: 'Walk-in', search: '',
     retDate: getPHTDateStringFromDate(getPHTDateObj()), 
@@ -808,7 +813,7 @@ export default function AdminRequests() {
   const handleApproveClick = useCallback((req, e) => {
     e?.stopPropagation();
     if (isRoomLocked) return;
-    if (req.pickup_datetime || req.pickup_start) {
+    if (req.pickup_datetime || req.pickup_start || req.scheduled_time) {
       setApproveReq(req);
       setApproveModal(true);
     } else {
@@ -1114,18 +1119,18 @@ export default function AdminRequests() {
     try {
       const payload = [];
       adjustedItems.forEach(item => {
-        if (item.actualQuantity <= 0) { payload.push({ id: item.id, quantity: 0 }); return; }
+        if (item.actualQuantity <= 0) { payload.push({ id: getSafeId(item.id), quantity: 0 }); return; }
         if (item.isQtyMode) {
-          payload.push({ id: item.isNew ? null : item.id, inventory_type_id: item.inventory_type_id, stock_id: item.stock_id, qty_requested: item.actualQuantity, quantity: item.actualQuantity, assigned_to: item.assignTo });
+          payload.push({ id: getSafeId(item.id), inventory_type_id: item.inventory_type_id, stock_id: item.stock_id, qty_requested: item.actualQuantity, quantity: item.actualQuantity, assigned_to: item.assignTo });
           return;
         }
         if (!item.consumable_id) {
           (item.scannedPhysicalItems || []).forEach(s =>
-            payload.push({ id: (item.isNew || String(item.id).startsWith('split-')) ? null : item.id, inventory_type_id: item.inventory_type_id, quantity: 1, inventory_item_id: s.id, assigned_to: item.assignTo }),
+            payload.push({ id: getSafeId(item.id), inventory_type_id: item.inventory_type_id, quantity: 1, inventory_item_id: s.id, assigned_to: item.assignTo }),
           );
           return;
         }
-        payload.push({ id: item.isNew ? null : item.id, inventory_type_id: item.inventory_type_id, consumable_id: item.consumable_id, quantity: item.actualQuantity, assigned_to: item.assignTo });
+        payload.push({ id: getSafeId(item.id), inventory_type_id: item.inventory_type_id, consumable_id: item.consumable_id, quantity: item.actualQuantity, assigned_to: item.assignTo });
       });
 
       await issueRequest(selectedReq.id, { items: payload, return_deadline: deadlinePHT });
@@ -1139,7 +1144,6 @@ export default function AdminRequests() {
     }
   };
 
-  // ⚡ FIX: Smart Bulk Quantity Check for Walk in conflicts
   const checkWalkInConflicts = useCallback(async (items, retDate, retTime) => {
     if (!retDate || !retTime || items.length === 0) return [];
     try {
@@ -1157,7 +1161,7 @@ export default function AdminRequests() {
 
         events.forEach(ev => {
           if (!['APPROVED', 'PENDING', 'PENDING APPROVAL'].includes(ev.status?.toUpperCase())) return;
-          const evStart = toPHTime(ev.pickup_datetime || ev.pickup_start);
+          const evStart = toPHTime(ev.pickup_datetime || ev.pickup_start || ev.scheduled_time);
           const evEnd   = ev.return_deadline
             ? toPHTime(ev.return_deadline)
             : new Date(evStart.getTime() + 3_600_000);
@@ -1186,7 +1190,6 @@ export default function AdminRequests() {
           }
         });
 
-        // ⚡ If it's a quantity item, mathematically check if we have enough to fulfill both
         if (isFungible && conflictingEvents.length > 0) {
           const currentAvailable = item.maxAvail || 0;
           const walkInQty = item.actualQuantity || 1;
@@ -1199,7 +1202,6 @@ export default function AdminRequests() {
                 simultaneousQty += other.qtyInEv;
               }
             }
-            // Deficit exists if current stock minus walk-in demand cannot fulfill the reservations
             if (currentAvailable - walkInQty < simultaneousQty) {
               hasDefiniteConflict = true;
               break;
@@ -1251,10 +1253,9 @@ export default function AdminRequests() {
       toast.error('Please set a return deadline.'); return;
     }
 
-    // ⚡ FIX: Strict Same-Day Enforcement
     if (manualForm.retDate !== todayStr) {
       toast.error('Walk-in transactions are strictly same-day returns.');
-      setManualForm(f => ({ ...f, retDate: todayStr })); // Auto-correct the UI
+      setManualForm(f => ({ ...f, retDate: todayStr })); 
       return;
     }
 
@@ -1386,7 +1387,6 @@ export default function AdminRequests() {
               Scan Request QR
             </button>
             
-            {/* ⚡ FIX: Walk-In button dynamically disables when a future date is selected */}
             {(() => {
               const todayStr = getPHTDateStringFromDate(getPHTDateObj());
               const isNotToday = selectedDate && selectedDate !== todayStr;
@@ -1677,9 +1677,9 @@ export default function AdminRequests() {
                           </div>
                           <div className="flex items-center gap-2 text-xs text-muted flex-wrap">
                             <span className={`font-black ${r.isExpired ? 'text-gray-500' : STATUS_TEXT_CLS[r.status] || 'text-gray-500'}`}>
-  {r.isExpired && !['REJECTED', 'CANCELLED', 'RETURNED', 'VOIDED'].includes(r.status)
-    ? 'VOIDED' : r.status}
-</span>
+                              {r.isExpired && !['REJECTED', 'CANCELLED', 'RETURNED', 'VOIDED'].includes(r.status)
+                                ? 'VOIDED' : r.status}
+                            </span>
                             <span>•</span>
                             <span>{r.items?.length ?? 0} items</span>
                             {timeRange ? (
@@ -1757,7 +1757,6 @@ export default function AdminRequests() {
                                   <button disabled={isRoomLocked} onClick={e => handleRejectClick(r, e)}  className="flex-1 px-3 py-2 rounded-lg text-xs font-bold bg-red-100 text-red-700">Deny</button>
                                 </>
                               )}
-
                             </div>
                           </div>
 
@@ -1777,8 +1776,11 @@ export default function AdminRequests() {
                                       </p>
                                     )}
                                     {item.item_status && (
-                                      <span className={`text-[10px] font-bold uppercase mt-1 inline-block ${['RETURNED', 'ISSUED'].includes(item.item_status) ? 'text-emerald-600' : ['EXPIRED', 'REJECTED', 'CANCELLED'].includes(item.item_status) ? 'text-red-600' : 'text-amber-600'}`}>
-                                        {item.item_status === 'EXPIRED' ? 'EXPIRED (VOID)' : item.item_status}
+                                      <span className={`text-[10px] font-bold uppercase mt-1 inline-block px-1.5 py-0.5 rounded ${['RETURNED', 'ISSUED'].includes(item.item_status) ? 'bg-emerald-100 text-emerald-700' : ['EXPIRED', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(r.status?.toUpperCase()) ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                                        {/* ⚡ FIX: Force items to match the parent request's terminal status */}
+                                        {['REJECTED', 'CANCELLED', 'EXPIRED', 'VOIDED'].includes(r.status?.toUpperCase()) 
+                                          ? r.status.toUpperCase() 
+                                          : item.item_status}
                                       </span>
                                     )}
                                   </div>
@@ -1823,7 +1825,7 @@ export default function AdminRequests() {
               <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-3 flex items-center gap-1.5"><CalendarClock size={14} /> Reservation Details</h3>
               <div className="grid grid-cols-1 gap-2 text-sm">
                 <p><span className="font-bold text-blue-800">Borrower:</span> <span className="text-blue-900">{approveReq.requester_name || approveReq.student_id}</span></p>
-                <p><span className="font-bold text-blue-800">Scheduled Pickup:</span> <span className="text-blue-900">{fmtDateTimeFull(approveReq.pickup_datetime || approveReq.pickup_start)}</span></p>
+                <p><span className="font-bold text-blue-800">Scheduled Pickup:</span> <span className="text-blue-900">{fmtDateTimeFull(approveReq.pickup_datetime || approveReq.pickup_start || approveReq.scheduled_time)}</span></p>
                 {approveReq.return_deadline && (
                   <p><span className="font-bold text-emerald-700">Expected Return:</span> <span className="text-emerald-900">{fmtDateTimeFull(approveReq.return_deadline)}</span></p>
                 )}
