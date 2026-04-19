@@ -1,6 +1,6 @@
 // src/pages/admin/Requests.jsx
 import React, {
-  useState, useEffect, useRef, useMemo, useCallback,
+  useState, useEffect, useRef, useMemo, useCallback, memo,
 } from 'react';
 import {
   RefreshCw, Package, Scan, Camera, Search, Clock, CheckCircle2,
