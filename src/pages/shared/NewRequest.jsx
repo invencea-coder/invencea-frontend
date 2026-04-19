@@ -191,7 +191,6 @@ const CartRow = memo(({ item, onAdjust, onRemove }) => {
 CartRow.displayName = 'CartRow';
 
 const InventoryUnitRow = memo(({ item, inCart, bookings, visualPickedWindow, getAvailableQtyAtSlot, pickedWindowTs, onAdd, onRemove }) => {
-  // ⚡ Check availability specifically for this slot
   const isAvailableAtSlot = pickedWindowTs ? getAvailableQtyAtSlot(item, pickedWindowTs) > 0 : item._avail > 0;
   const disabled = item._avail <= 0 || (pickedWindowTs && !isAvailableAtSlot);
   const visualBookings = bookings.filter(b => b.startMins != null);
@@ -244,7 +243,6 @@ const InventoryGroupCard = memo(({ group, cart, pickedWindowTs, visualPickedWind
   const bookings       = getBookingsForGroup(group);
   const visualBookings = bookings.filter(b => b.startMins != null);
 
-  // ⚡ Uses Centralized Calculation Hook
   const freeAtSlot = useMemo(() => {
     if (!step2Done || !pickedWindowTs) return null;
     if (isFungible) {
@@ -270,6 +268,8 @@ const InventoryGroupCard = memo(({ group, cart, pickedWindowTs, visualPickedWind
     }
     setExpanded(prev => !prev);
   };
+
+  const inCartForItem = useCallback((item) => cart.some(c => cartKeyOf(c) === cartKeyOf(item)), [cart]);
 
   return (
     <div className={`rounded-2xl border-2 overflow-hidden transition-all ${fullyUnavail ? 'border-gray-100 opacity-55' : cartCount > 0 || cartTotalQty > 0 ? 'border-teal-300 shadow-sm shadow-teal-50' : 'border-black/6 shadow-sm'}`}>
@@ -612,7 +612,6 @@ export default function NewRequest() {
     if (endMins <= BREAK_END_MINS && endMins > BREAK_START_MINS) return 'Return time cannot be during the lunch break (11:30 AM - 1:00 PM).';
     if (startMins < BREAK_START_MINS && endMins > BREAK_END_MINS && bookingMode === 'sameday') return 'Same-day bookings cannot span across the lunch break. Please split into two bookings.';
 
-    // ⚡ Cart Conflict Validation (Reusing centralized hook)
     if (cart.length > 0) {
       for (const cartItem of cart) {
         const availableNow = getAvailableQtyAtSlot(cartItem, pickedWindowTs);
@@ -965,7 +964,7 @@ export default function NewRequest() {
                         {groupedInventory.map(group => (
                           <InventoryGroupCard
                             key={group.name} group={group} cart={cart} pickedWindowTs={pickedWindowTs} visualPickedWindow={visualPickedWindow}
-                            step2Done={step2Done} isItemBookedAtSlot={isItemBookedAtSlot} getBookingsForGroup={getBookingsForGroup} getBookingsForItem={getBookingsForItem}
+                            step2Done={step2Done} getBookingsForGroup={getBookingsForGroup} getBookingsForItem={getBookingsForItem}
                             getAvailableQtyAtSlot={getAvailableQtyAtSlot} selectedDate={selectedDate} onAdd={addToCart} onRemove={removeFromCart} onAdjustQty={adjustCartQty}
                           />
                         ))}
