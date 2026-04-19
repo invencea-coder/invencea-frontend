@@ -116,12 +116,16 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
       const res = await api.get('/requests/calendar', { params: { room_id: roomId } });
       const fetchedData = Array.isArray(res.data.data) ? res.data.data : [];
       
-      // ⚡ STRICT WHITELIST AND DYNAMIC EXPIRATION FILTER
+      // ⚡ STRICT WHITELIST, EXPIRATION, AND ROOM ISOLATION
       const validEvents = fetchedData.filter(ev => {
         const status = String(ev.status || ev.request_status || '').toUpperCase();
         const isWhitelisted = ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(status);
         
-        return isWhitelisted && !isCalendarEventExpired(ev);
+        // Ensure the event belongs to this exact calendar's room
+        const evRoomId = ev.room_id || ev.roomId;
+        const isCorrectRoom = !evRoomId || String(evRoomId) === String(roomId);
+
+        return isWhitelisted && isCorrectRoom && !isCalendarEventExpired(ev);
       });
 
       setEvents(validEvents);

@@ -5,7 +5,8 @@
  * - Added Support for Multi-Day reservations with seamless UI toggle.
  * - Availability logic upgraded from Intraday Minutes to Unix Epoch Timestamps.
  * - TimelineBar visually clamps multi-day spans so they render correctly on the viewed day.
- * - Cart distinguishes between physical units and fungible bulk items.
+ * - Floating Cart / Bottom Sheet UI prevents excessive scrolling.
+ * - Non-destructive Edit Mode for Step 2 Timeframe validation.
  */
 
 import React, {
@@ -675,8 +676,6 @@ export default function NewRequest() {
     [], 
   );
 
-  const submitRef = useRef(null);
-
   // ── State ──────────────────────────────────────────────────────────────────
   const [rooms, setRooms]               = useState([]);
   const [selectedRoomId, setSelectedRoomId] = useState('');
@@ -690,12 +689,16 @@ export default function NewRequest() {
   const [duration, setDuration]         = useState(null);
   const [endDate, setEndDate]           = useState('');
   const [returnTime, setReturnTime]     = useState('');
+  
+  // ⚡ Explicit confirmation state for Step 2
+  const [isTimeframeConfirmed, setIsTimeframeConfirmed] = useState(false);
 
   const [inventory, setInventory]       = useState([]);
   const [loadingInv, setLoadingInv]     = useState(false);
   const [inventorySearch, setInventorySearch] = useState('');
 
-  const [cart, setCart] = useState([]);
+  const [cart, setCart]                 = useState([]);
+  const [isCartOpen, setIsCartOpen]     = useState(false); 
   const [calendarEvents, setCalendarEvents] = useState([]);
 
   const [purpose, setPurpose]           = useState('');
@@ -968,7 +971,6 @@ export default function NewRequest() {
     [getBookingsForItem],
   );
 
-  // ⚡ CRITICAL HELPER: DEFINED BEFORE USE
   const isItemBookedAtSlot = useCallback(
     (item) => {
       if (!pickedWindowTs) return false;
@@ -1073,7 +1075,8 @@ export default function NewRequest() {
   const currentSlotOk = !slotError;
 
   const step1Done = !!selectedDate;
-  const step2Done = !!(pickedWindowTs && currentSlotOk);
+  // ⚡ Step 2 is ONLY done if they clicked the confirmation button
+  const step2Done = !!(pickedWindowTs && currentSlotOk && isTimeframeConfirmed);
   const step3Done = step2Done && cart.length > 0;
   const canSubmit = step3Done && purpose && (purpose !== 'Other' || customPurpose.trim()) && email;
 
@@ -1159,14 +1162,10 @@ export default function NewRequest() {
     });
   }, [pickedWindowTs, getBookingsForItem]);
 
+  // ⚡ Non-destructive Date Changing
   const handleDateSelect = useCallback((dateStr) => {
     setSelectedDate(prev => prev === dateStr ? null : dateStr);
-    setPickupTime('');
-    setDuration(null);
-    setEndDate('');
-    setReturnTime('');
-    setCart([]);
-    setInventorySearch('');
+    setIsTimeframeConfirmed(false); // Unconfirm time to ensure re-validation
   }, []);
 
   const handleRoomChange = useCallback(() => {
@@ -1178,6 +1177,7 @@ export default function NewRequest() {
     setReturnTime('');
     setCart([]);
     setCalendarOpen(true);
+    setIsTimeframeConfirmed(false);
     setInventory([]);
     setCalendarEvents([]);
     setInventorySearch('');
@@ -1218,6 +1218,7 @@ export default function NewRequest() {
 
       const res = await createRequest(payload);
       setSuccessData(res.data.data ?? res.data);
+      setIsCartOpen(false);
     } catch (e) {
       toast.error(e.response?.data?.message || 'Failed to submit request. Please try again.');
       fetchInventory();
@@ -1366,17 +1367,20 @@ export default function NewRequest() {
                         : 'Pick a timeframe'}
                     </span>
                   </div>
+                  
+                  {/* ⚡ Non-destructive Edit Button */}
                   {step2Done && (
                     <button
-                      onClick={() => { setPickupTime(''); setDuration(null); setEndDate(''); setReturnTime(''); setCart([]); }}
+                      onClick={() => setIsTimeframeConfirmed(false)}
                       className="ml-2 text-xs font-bold text-gray-400 hover:text-primary bg-gray-100 hover:bg-primary/10 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
                     >
-                      Change
+                      Edit Time
                     </button>
                   )}
                 </div>
 
-                {!step2Done && (
+                {/* ⚡ Render Form if not explicitly confirmed */}
+                {!isTimeframeConfirmed && (
                   <div className="px-4 pb-4 space-y-4">
 
                     {/* Booking Mode Toggle */}
@@ -1514,37 +1518,56 @@ export default function NewRequest() {
 
                     {pickedWindowTs && (
                       <div
-                        className={`text-xs font-bold px-4 py-3 rounded-xl flex items-start gap-2.5 transition-all leading-relaxed
+                        className={`text-xs font-bold px-4 py-3 rounded-xl flex flex-col gap-2 transition-all leading-relaxed
                           ${currentSlotOk
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                             : 'bg-red-50 text-red-600 border border-red-200'}`}
                       >
-                        {currentSlotOk ? (
-                          <>
-                            <Check size={16} className="shrink-0 mt-0.5" />
-                            <span>
-                              Timeframe valid. Browse equipment below to continue.
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                            <span>
-                              {slotError}
-                            </span>
-                          </>
+                        <div className="flex items-start gap-2.5">
+                          {currentSlotOk ? (
+                            <>
+                              <Check size={16} className="shrink-0 mt-0.5" />
+                              <span>Timeframe valid. Confirm below to proceed.</span>
+                            </>
+                          ) : (
+                            <>
+                              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                              <span>{slotError}</span>
+                            </>
+                          )}
+                        </div>
+
+                        {/* ⚡ Fast escape hatch if cart conflict occurs */}
+                        {!currentSlotOk && slotError?.includes('Cart conflict') && (
+                          <button
+                            onClick={() => setCart([])}
+                            className="mt-1 w-full py-2.5 bg-red-100 hover:bg-red-200 text-red-700 font-black rounded-lg transition-colors border border-red-200 text-[10px] uppercase tracking-wider shadow-sm"
+                          >
+                            Clear Cart to Resolve Conflict
+                          </button>
+                        )}
+
+                        {/* ⚡ Explicit Confirm Button */}
+                        {currentSlotOk && (
+                          <button
+                            onClick={() => setIsTimeframeConfirmed(true)}
+                            className="mt-1 w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-xl transition-colors shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2"
+                          >
+                            <CheckCircle2 size={16} /> Confirm Timeframe
+                          </button>
                         )}
                       </div>
                     )}
                   </div>
                 )}
 
+                {/* ⚡ Confirmed State Summary */}
                 {step2Done && (
                   <div className="px-4 pb-3">
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-2">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-2 shadow-sm">
                       <CheckCircle size={14} className="text-emerald-600 flex-shrink-0" />
                       <span className="text-xs font-bold text-emerald-700">
-                        Timeframe confirmed
+                        Timeframe locked in. Browse equipment below.
                       </span>
                     </div>
                   </div>
@@ -1568,7 +1591,7 @@ export default function NewRequest() {
                     <div className="bg-gray-50 rounded-xl border border-dashed border-gray-200 py-6 px-4 text-center">
                       <Lock size={24} className="text-gray-300 mx-auto mb-2" />
                       <p className="text-xs font-bold text-gray-400">
-                        Set your timeframe above to browse equipment.
+                        Confirm your timeframe above to browse equipment.
                       </p>
                       <p className="text-[11px] text-gray-300 mt-1">
                         Each item will show real-time availability for your selected window.
@@ -1651,128 +1674,178 @@ export default function NewRequest() {
               </div>
             )}
 
-            {step2Done && (
-              <div className="pb-32" ref={submitRef}>
-                <div className="px-4 py-3 flex items-center gap-2.5">
-                  <StepBadge step="4" complete={canSubmit} locked={false} />
-                  <ShoppingBag size={13} className={step3Done ? 'text-gray-500' : 'text-gray-300'} />
-                  <span className={`text-xs font-black uppercase tracking-wider ${step3Done ? 'text-gray-700' : 'text-gray-400'}`}>
-                    Cart &amp; Confirm
-                  </span>
-                </div>
+            <div className="h-32" aria-hidden /> {/* Pad space for floating bottom bar */}
+          </div>
 
-                <div className="px-4 pb-4 space-y-5">
-                  {cart.length === 0 ? (
-                    <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-black/10">
-                      <ShoppingBag size={28} className="mx-auto text-gray-300 mb-2" />
-                      <p className="text-xs font-bold text-gray-400">Your cart is empty</p>
-                      <p className="text-[11px] text-gray-300 mt-1">
-                        Add items from the catalog above.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {cart.map(item => (
-                        <CartRow
-                          key={cartKeyOf(item)}
-                          item={item}
-                          onAdjust={adjustCartQty}
-                          onRemove={removeFromCart}
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <label
-                      htmlFor="purpose-select"
-                      className="block text-[10px] font-black text-gray-500 uppercase tracking-wider"
-                    >
-                      Purpose <span className="text-red-400">*</span>
-                    </label>
-                    <select
-                      id="purpose-select"
-                      className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors"
-                      value={purpose}
-                      onChange={e => setPurpose(e.target.value)}
-                    >
-                      <option value="" disabled>Select purpose…</option>
-                      {PURPOSES.map(p => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                    {purpose === 'Other' && (
-                      <input
-                        type="text"
-                        placeholder="Briefly describe your purpose…"
-                        className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors mt-2"
-                        value={customPurpose}
-                        onChange={e => setCustomPurpose(e.target.value)}
-                        maxLength={120}
-                      />
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <label
-                      htmlFor="notif-email"
-                      className="block text-[10px] font-black text-gray-500 uppercase tracking-wider"
-                    >
-                      Notification email <span className="text-red-400">*</span>
-                    </label>
-                    <div className="relative">
-                      <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                      <input
-                        id="notif-email"
-                        type="email"
-                        placeholder="your@email.com"
-                        autoComplete="email"
-                        className="w-full bg-slate-50 border border-black/10 rounded-xl pl-10 pr-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  {!currentSlotOk && cart.length > 0 && (
-                    <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3.5 flex items-start gap-2.5">
-                      <AlertTriangle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
-                      <p className="text-xs font-bold text-red-600 leading-relaxed">
-                        One or more items in your cart have a conflict during your selected timeframe.
-                        Remove the conflicting item or change your time slot above.
-                      </p>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleSubmit}
-                    disabled={submitting || !canSubmit}
-                    className="w-full py-4 bg-primary hover:bg-primary/90 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-2xl font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20 active:scale-[0.98] disabled:shadow-none disabled:active:scale-100"
-                  >
-                    {submitting ? (
-                      <Loader2 size={18} className="animate-spin" />
-                    ) : (
-                      <><CheckCircle2 size={18} /> Confirm Reservation</>
-                    )}
-                  </button>
-
-                  {!canSubmit && !submitting && (
-                    <p className="text-center text-[11px] text-gray-400 leading-relaxed px-4">
-                      {cart.length === 0
-                        ? 'Add at least one item from the catalog above'
-                        : !currentSlotOk
-                          ? '⚠ Time conflict — change your timeframe or remove the conflicting item'
-                          : !purpose
-                            ? 'Select a purpose for this request'
-                            : purpose === 'Other' && !customPurpose.trim()
-                              ? 'Describe your purpose in the field above'
-                              : 'Add a valid notification email'}
-                    </p>
-                  )}
+          {/* ⚡ FLOATING ACTION BAR FOR CART */}
+          {selectedDate && !calendarOpen && (
+            <>
+              <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-black/10 px-4 py-3 z-[60] shadow-[0_-10px_30px_rgba(0,0,0,0.08)] pb-safe">
+                <div className="flex items-center justify-between gap-3 max-w-4xl mx-auto">
+                   <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { if(cartTotalItems > 0) setIsCartOpen(true); }}>
+                      {cartTotalItems > 0 ? (
+                        <div className="flex items-center gap-3">
+                           <div className="relative">
+                              <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-white shadow-md">
+                                 <ShoppingBag size={20} />
+                              </div>
+                              <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[11px] font-black min-w-[22px] h-[22px] px-1 flex items-center justify-center rounded-full border-2 border-white shadow-sm">
+                                 {cartTotalItems}
+                              </span>
+                           </div>
+                           <div className="min-w-0">
+                              <p className="text-sm font-black text-gray-900 truncate">
+                                {cartTotalItems} item{cartTotalItems > 1 ? 's' : ''} added
+                              </p>
+                              <p className="text-[10px] text-gray-500 font-medium truncate mt-0.5">
+                                {currentSlotOk ? 'Tap to view cart & confirm' : '⚠ Time conflict detected'}
+                              </p>
+                           </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-3">
+                           <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center text-gray-400">
+                              <ShoppingBag size={20} />
+                           </div>
+                           <div>
+                              <p className="text-sm font-bold text-gray-400">Cart is empty</p>
+                              <p className="text-[10px] text-gray-400 mt-0.5">Select items to continue</p>
+                           </div>
+                        </div>
+                      )}
+                   </div>
+                   
+                   <button
+                     disabled={cartTotalItems === 0}
+                     onClick={() => setIsCartOpen(true)}
+                     className="px-6 py-3.5 bg-gray-900 text-white font-black text-sm rounded-xl shadow-lg shadow-gray-900/30 disabled:opacity-40 disabled:shadow-none hover:bg-black transition-all active:scale-95 flex items-center gap-2"
+                   >
+                     Review <ChevronUp size={16} className="opacity-70" />
+                   </button>
                 </div>
               </div>
-            )}
 
-            <div className="h-20" aria-hidden />
-          </div>
+              {/* ⚡ FLOATING CART MODAL (BOTTOM SHEET) */}
+              {isCartOpen && (
+                <div className="fixed inset-0 z-[100] flex flex-col justify-end bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setIsCartOpen(false)}>
+                  <div className="bg-white rounded-t-3xl w-full max-w-3xl mx-auto max-h-[85vh] flex flex-col animate-in slide-in-from-bottom-full duration-300 shadow-2xl" onClick={e => e.stopPropagation()}>
+                     
+                     <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between shrink-0 bg-white rounded-t-3xl">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                            <ShoppingBag size={18} />
+                          </div>
+                          <div>
+                            <h2 className="text-base font-black text-gray-900 leading-none">Your Cart</h2>
+                            <p className="text-[10px] font-bold text-gray-500 mt-1 uppercase tracking-wider">{cartTotalItems} item{cartTotalItems > 1 ? 's' : ''}</p>
+                          </div>
+                        </div>
+                        <button onClick={() => setIsCartOpen(false)} className="p-2.5 bg-gray-100 rounded-full text-gray-500 hover:text-red-500 hover:bg-red-50 transition-colors">
+                          <X size={18} />
+                        </button>
+                     </div>
+                     
+                     <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-6 bg-slate-50/50">
+                        <div className="space-y-2.5">
+                          {cart.map(item => (
+                            <CartRow
+                              key={cartKeyOf(item)}
+                              item={item}
+                              onAdjust={adjustCartQty}
+                              onRemove={removeFromCart}
+                            />
+                          ))}
+                        </div>
+
+                        <div className="space-y-2 bg-white p-5 rounded-2xl border border-black/5 shadow-sm">
+                          <label
+                            htmlFor="purpose-select"
+                            className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-2"
+                          >
+                            Purpose <span className="text-red-400">*</span>
+                          </label>
+                          <select
+                            id="purpose-select"
+                            className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors"
+                            value={purpose}
+                            onChange={e => setPurpose(e.target.value)}
+                          >
+                            <option value="" disabled>Select purpose…</option>
+                            {PURPOSES.map(p => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                          {purpose === 'Other' && (
+                            <input
+                              type="text"
+                              placeholder="Briefly describe your purpose…"
+                              className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors mt-3"
+                              value={customPurpose}
+                              onChange={e => setCustomPurpose(e.target.value)}
+                              maxLength={120}
+                            />
+                          )}
+                        </div>
+
+                        <div className="space-y-2 bg-white p-5 rounded-2xl border border-black/5 shadow-sm">
+                          <label
+                            htmlFor="notif-email"
+                            className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-2"
+                          >
+                            Notification email <span className="text-red-400">*</span>
+                          </label>
+                          <div className="relative">
+                            <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                            <input
+                              id="notif-email"
+                              type="email"
+                              placeholder="your@email.com"
+                              autoComplete="email"
+                              className="w-full bg-slate-50 border border-black/10 rounded-xl pl-10 pr-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors"
+                              value={email}
+                              onChange={e => setEmail(e.target.value)}
+                            />
+                          </div>
+                        </div>
+
+                        {!currentSlotOk && (
+                          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3.5 flex items-start gap-2.5 shadow-sm">
+                            <AlertTriangle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+                            <p className="text-xs font-bold text-red-600 leading-relaxed">
+                              {slotError || 'One or more items in your cart have a conflict during your selected timeframe. Remove the conflicting item or change your time slot.'}
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="pt-2">
+                          <button
+                            onClick={handleSubmit}
+                            disabled={submitting || !canSubmit}
+                            className="w-full py-4 bg-primary hover:bg-primary/90 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20 active:scale-[0.98] disabled:shadow-none disabled:active:scale-100"
+                          >
+                            {submitting ? (
+                              <Loader2 size={18} className="animate-spin" />
+                            ) : (
+                              <><CheckCircle2 size={18} /> Confirm Reservation</>
+                            )}
+                          </button>
+                          
+                          {!canSubmit && !submitting && (
+                            <p className="text-center text-[10px] font-bold text-gray-400 mt-3 uppercase tracking-wider">
+                              {!currentSlotOk
+                                ? '⚠ Resolve time conflict to continue'
+                                : !purpose
+                                  ? 'Select a purpose'
+                                  : purpose === 'Other' && !customPurpose.trim()
+                                    ? 'Describe your purpose'
+                                    : 'Add a valid notification email'}
+                            </p>
+                          )}
+                        </div>
+                     </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </>
       )}
 
