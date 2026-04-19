@@ -464,7 +464,8 @@ export default function AdminRequests() {
     const results = [];
     for (const ev of calendarEventsRef.current) {
       if (excludeReqId && String(ev.id) === String(excludeReqId)) continue;
-      if (isCalendarEventExpired(ev)) continue;
+      // ⚡ FIX: Use the correct function name (isExpiredRow) instead of isCalendarEventExpired
+      if (isExpiredRow(ev)) continue;
       if (!['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(ev.status?.toUpperCase())) continue;
 
       const evStart = toPHTime(ev.pickup_datetime ?? ev.pickup_start ?? ev.scheduled_time ?? ev.issued_time);
