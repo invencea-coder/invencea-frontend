@@ -113,7 +113,8 @@ export default function StudentDashboard() {
       activeRequests: active, 
       history: hist, 
       overdueCount: overdue,
-      pendingCount: active.filter(r => ['PENDING', 'PENDING APPROVAL'].includes(r.status)).length,
+      // ⚡ FIX: Added 'APPROVED' to the pending counter
+      pendingCount: active.filter(r => ['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(r.status)).length,
       issuedCount: active.filter(r => ['ISSUED', 'PARTIALLY RETURNED'].includes(r.status)).length
     };
   }, [requests]);
@@ -164,7 +165,6 @@ export default function StudentDashboard() {
 
   return (
     <div className="min-h-[calc(100vh-4rem)] relative bg-slate-50 dark:bg-darkSurface p-4 md:p-8 overflow-x-hidden z-0 pb-20 md:pb-8">
-      {/* Premium Glassmorphism Background */}
       <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden">
         <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px]" />
         <div className="absolute top-[40%] -right-[10%] w-[40%] h-[40%] rounded-full bg-blue-400/10 blur-[100px]" />
@@ -173,7 +173,6 @@ export default function StudentDashboard() {
 
       <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in zoom-in-95 duration-500 relative z-10">
         
-        {/* Overdue Alert */}
         {overdueCount > 0 && (
           <div className="bg-red-50 border border-red-200 p-4 rounded-2xl flex items-start gap-3 animate-pulse shadow-sm">
             <div className="bg-red-100 text-red-600 p-2 rounded-xl mt-0.5"><AlertTriangle size={20} /></div>
@@ -184,7 +183,6 @@ export default function StudentDashboard() {
           </div>
         )}
 
-        {/* Profile Header */}
         <NeumorphCard className="p-6 bg-white/70 backdrop-blur-xl border-white/50 flex justify-between items-center">
           <div>
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Student Portal</p>
@@ -197,7 +195,6 @@ export default function StudentDashboard() {
           </button>
         </NeumorphCard>
 
-        {/* Stats Grid */}
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-white/70 backdrop-blur-xl border border-white/50 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm">
             <p className="text-4xl font-black text-amber-500">{pendingCount}</p>
@@ -209,7 +206,6 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        {/* Navigation Actions */}
         <div className="grid grid-cols-2 gap-4">
           <button onClick={() => navigate('/student/new-request')} className="group bg-primary p-6 rounded-3xl shadow-md shadow-primary/20 flex flex-col items-center gap-2 transition-all hover:-translate-y-1 duration-300">
             <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center text-white"><PlusCircle size={24} /></div>
@@ -221,7 +217,6 @@ export default function StudentDashboard() {
           </button>
         </div>
 
-        {/* Active Activity List */}
         <div className="space-y-3">
           <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5 ml-1">
             <Clock size={14} /> Active Activity
@@ -285,7 +280,6 @@ export default function StudentDashboard() {
           )}
         </div>
 
-        {/* History List */}
         {history.length > 0 && (
           <div className="space-y-3 pt-4">
             <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5 ml-1">
@@ -312,13 +306,8 @@ export default function StudentDashboard() {
         )}
       </div>
 
-      {/* ─── CHANGE PIN MODAL ─── */}
-      <NeumorphModal 
-        open={isPinModalOpen} 
-        onClose={() => { if (!isForcedReset) setIsPinModalOpen(false); }} 
-        title="Change Security PIN" 
-        size="sm"
-      >
+      {/* PIN Change Modals */}
+      <NeumorphModal open={isPinModalOpen} onClose={() => { if (!isForcedReset) setIsPinModalOpen(false); }} title="Change Security PIN" size="sm">
         <form onSubmit={handlePinSubmitRequest} className="space-y-4">
           {isForcedReset && (
             <div className="bg-blue-50 border border-blue-200 text-blue-700 p-3 rounded-xl text-xs font-bold flex items-start gap-2.5 shadow-sm">
@@ -326,42 +315,14 @@ export default function StudentDashboard() {
               <p className="leading-relaxed">Welcome! For your security, you must set a personal 4-digit PIN before accessing your dashboard.</p>
             </div>
           )}
-          
           <div className="space-y-3">
-            <NeumorphInput 
-              label={isForcedReset ? "Default Current PIN" : "Current PIN"} 
-              type="password" 
-              value={pinForm.current_pin} 
-              onChange={(e) => handlePinChangeInput('current_pin', e.target.value)} 
-              placeholder="••••"
-              maxLength={4} 
-              required 
-            />
-            <NeumorphInput 
-              label="New 4-Digit PIN" 
-              type="password" 
-              value={pinForm.new_pin} 
-              onChange={(e) => handlePinChangeInput('new_pin', e.target.value)} 
-              placeholder="••••"
-              maxLength={4} 
-              required 
-            />
-            <NeumorphInput 
-              label="Confirm New PIN" 
-              type="password" 
-              value={pinForm.confirm_pin} 
-              onChange={(e) => handlePinChangeInput('confirm_pin', e.target.value)} 
-              placeholder="••••"
-              maxLength={4} 
-              required 
-            />
+            <NeumorphInput label={isForcedReset ? "Default Current PIN" : "Current PIN"} type="password" value={pinForm.current_pin} onChange={(e) => handlePinChangeInput('current_pin', e.target.value)} placeholder="••••" maxLength={4} required />
+            <NeumorphInput label="New 4-Digit PIN" type="password" value={pinForm.new_pin} onChange={(e) => handlePinChangeInput('new_pin', e.target.value)} placeholder="••••" maxLength={4} required />
+            <NeumorphInput label="Confirm New PIN" type="password" value={pinForm.confirm_pin} onChange={(e) => handlePinChangeInput('confirm_pin', e.target.value)} placeholder="••••" maxLength={4} required />
           </div>
-
           <div className="pt-4 flex gap-3 border-t border-black/5 mt-2">
             {!isForcedReset && (
-              <NeumorphButton type="button" variant="outline" className="flex-1 py-3 font-bold" onClick={() => setIsPinModalOpen(false)}>
-                Cancel
-              </NeumorphButton>
+              <NeumorphButton type="button" variant="outline" className="flex-1 py-3 font-bold" onClick={() => setIsPinModalOpen(false)}>Cancel</NeumorphButton>
             )}
             <NeumorphButton type="submit" variant="primary" className="flex-1 py-3 font-bold shadow-md shadow-primary/20">
               {isForcedReset ? 'Save & Continue' : 'Update PIN'}
@@ -370,13 +331,7 @@ export default function StudentDashboard() {
         </form>
       </NeumorphModal>
 
-      {/* ─── CONFIRMATION MODAL FOR PIN CHANGE ─── */}
-      <NeumorphModal 
-        open={isConfirmPinModalOpen} 
-        onClose={() => setIsConfirmPinModalOpen(false)} 
-        title="Confirm PIN Change" 
-        size="sm"
-      >
+      <NeumorphModal open={isConfirmPinModalOpen} onClose={() => setIsConfirmPinModalOpen(false)} title="Confirm PIN Change" size="sm">
         <div className="text-center pb-2">
           <div className="w-16 h-16 bg-amber-50 border border-amber-200 text-amber-500 rounded-full flex items-center justify-center mx-auto shadow-inner mb-4">
             <KeyRound size={28} />
@@ -385,33 +340,17 @@ export default function StudentDashboard() {
           <p className="text-sm font-medium text-gray-500 mt-1 max-w-[250px] mx-auto">
             You are about to change your security PIN. You will need this new PIN for all future logins.
           </p>
-          
           <div className="flex gap-3 pt-6 border-t border-black/5 mt-6">
-            <NeumorphButton 
-              variant="outline" 
-              className="flex-1 py-3 font-bold" 
-              onClick={() => setIsConfirmPinModalOpen(false)} 
-              disabled={changingPin}
-            >
-              Back
-            </NeumorphButton>
-            <NeumorphButton 
-              variant="primary" 
-              className="flex-1 py-3 font-bold shadow-md shadow-primary/20 bg-primary" 
-              onClick={executePinChange} 
-              loading={changingPin}
-            >
-              Yes, Change PIN
-            </NeumorphButton>
+            <NeumorphButton variant="outline" className="flex-1 py-3 font-bold" onClick={() => setIsConfirmPinModalOpen(false)} disabled={changingPin}>Back</NeumorphButton>
+            <NeumorphButton variant="primary" className="flex-1 py-3 font-bold shadow-md shadow-primary/20 bg-primary" onClick={executePinChange} loading={changingPin}>Yes, Change PIN</NeumorphButton>
           </div>
         </div>
       </NeumorphModal>
 
-      {/* ─── DIGITAL TICKET & ITEM DETAILS MODAL ─── */}
+      {/* Ticket Detail Modal */}
       <NeumorphModal open={!!selectedTicket} onClose={() => setSelectedTicket(null)} title={`Request #${selectedTicket?.id}`} size="md">
         {selectedTicket && (
           <div className="space-y-4 flex flex-col items-center">
-            
             <div className="p-4 bg-white border border-black/10 rounded-2xl shadow-sm inline-block">
               <QRCodeSVG value={selectedTicket.qr_code || String(selectedTicket.id)} size={160} />
             </div>
@@ -459,7 +398,6 @@ export default function StudentDashboard() {
                 Close Details
               </NeumorphButton>
             </div>
-
           </div>
         )}
       </NeumorphModal>
