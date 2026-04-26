@@ -1,7 +1,7 @@
 // src/pages/student/StudentDashboard.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, FileText, KeyRound, QrCode, AlertTriangle, Clock, Package, CheckCircle2, XCircle, Barcode, ChevronRight } from 'lucide-react';
+import { PlusCircle, FileText, KeyRound, QrCode, AlertTriangle, Clock, Package, CheckCircle2, XCircle, Barcode, ChevronRight, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuth } from '../../context/AuthContext.jsx';
