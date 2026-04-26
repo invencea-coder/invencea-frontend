@@ -42,13 +42,14 @@ export default function KioskStatus() {
   const [requestData,  setRequestData]  = useState(null);
   const [scanMode,     setScanMode]     = useState('physical'); // 'physical' | 'upload'
   const [processing,   setProcessing]   = useState(false);
+  const [isDragging,   setIsDragging]   = useState(false);
 
   const bufferRef     = useRef('');
   const processingRef = useRef(false); 
 
   useEffect(() => { processingRef.current = processing; }, [processing]);
 
-  // ── Lookup handler (shared by both upload and physical scanner) ────────────
+  // ── Lookup handler (shared by all scanner modes) ───────────────────────────
   const handleCode = useCallback(async (code) => {
     if (processingRef.current) return; 
     const trimmed = code.trim();
@@ -73,6 +74,9 @@ export default function KioskStatus() {
   // ── Physical scanner keydown listener ─────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Only listen to keystrokes if in physical mode
+      if (scanMode !== 'physical') return;
+
       const tag = document.activeElement?.tagName?.toLowerCase();
       if (['input', 'textarea', 'select'].includes(tag)) return;
 
@@ -92,12 +96,14 @@ export default function KioskStatus() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleCode]);
+  }, [handleCode, scanMode]);
 
-  // ── File Upload Handler ───────────────────────────────────────────────────
-  const handleFileUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // ── Drag and Drop Handlers ────────────────────────────────────────────────
+  const processImageFile = async (file) => {
+    if (!file || !file.type.startsWith('image/')) {
+      toast.error('Please upload a valid image file.');
+      return;
+    }
 
     setProcessing(true);
     toast.loading('Scanning image...', { id: 'qr-scan' });
@@ -110,9 +116,36 @@ export default function KioskStatus() {
     } catch (err) {
       toast.error('No valid QR code found in this image.', { id: 'qr-scan' });
       setProcessing(false);
-    } finally {
-      e.target.value = ''; // Reset file input so same file can be scanned again
     }
+  };
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!processing) setIsDragging(true);
+  }, [processing]);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    if (processing) return;
+    
+    const file = e.dataTransfer.files?.[0];
+    if (file) processImageFile(file);
+  }, [processing]);
+
+  const handleFileInput = (e) => {
+    const file = e.target.files?.[0];
+    if (file) processImageFile(file);
+    e.target.value = ''; // Reset input so the same file can be selected again
   };
 
   // ── Reset to scan again ────────────────────────────────────────────────────
@@ -127,52 +160,52 @@ export default function KioskStatus() {
   const isTerminal   = requestData && ['REJECTED', 'CANCELLED'].includes(requestData.status);
 
   return (
-    <div className="min-h-screen bg-[#e0e5ec] flex flex-col items-center justify-center p-6">
+    <div className="min-h-screen bg-[#e0e5ec] flex flex-col items-center justify-center p-4 sm:p-6">
       
       {/* Hidden div required by html5-qrcode for file scanning */}
       <div id="hidden-file-scanner" style={{ display: 'none' }}></div>
 
-      <div className="w-full max-w-2xl space-y-6">
+      <div className="w-full max-w-2xl space-y-6 mt-8 sm:mt-0">
 
         {/* Header */}
         <div className="text-center relative">
           <button
             onClick={() => navigate('/')}
-            className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 text-sm font-semibold text-muted hover:text-primary transition-colors"
+            className="absolute -top-8 sm:top-1/2 left-0 sm:-translate-y-1/2 flex items-center gap-1.5 text-sm font-semibold text-muted hover:text-primary transition-colors"
           >
             <ArrowLeft size={16} /> Back
           </button>
-          <h1 className="text-4xl font-extrabold text-primary flex items-center justify-center gap-3">
-            <Scan size={36} /> InvenCEA Tracker
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-primary flex items-center justify-center gap-3">
+            <Scan className="w-8 h-8 sm:w-9 sm:h-9" /> InvenCEA Tracker
           </h1>
-          <p className="text-gray-500 mt-2 text-sm">
+          <p className="text-gray-500 mt-2 text-xs sm:text-sm px-4">
             Scan your receipt QR code to check your request status
           </p>
         </div>
 
-        <NeumorphCard className="p-8">
+        <NeumorphCard className="p-4 sm:p-8">
 
           {/* ── SCAN VIEW ── */}
           {!requestData && (
             <div className="flex flex-col items-center gap-6">
 
-              {/* Mode toggle */}
-              <div className="flex gap-2 bg-black/5 p-1 rounded-xl self-center">
+              {/* Responsive Mode toggle */}
+              <div className="flex flex-wrap justify-center gap-2 bg-black/5 p-1.5 rounded-xl self-center w-full sm:w-auto">
                 <button
                   onClick={() => setScanMode('physical')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                  className={`flex-1 sm:flex-none flex justify-center items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
                     scanMode === 'physical' ? 'bg-white shadow text-primary' : 'text-muted hover:text-primary'
                   }`}
                 >
-                  <Keyboard size={15}/> Scanner
+                  <Keyboard size={16}/> <span>Scanner</span>
                 </button>
                 <button
                   onClick={() => setScanMode('upload')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                  className={`flex-1 sm:flex-none flex justify-center items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
                     scanMode === 'upload' ? 'bg-white shadow text-primary' : 'text-muted hover:text-primary'
                   }`}
                 >
-                  <ImagePlus size={15}/> Upload Image
+                  <ImagePlus size={16}/> <span>Upload QR</span>
                 </button>
               </div>
 
@@ -185,38 +218,55 @@ export default function KioskStatus() {
                     <Scan size={40} className={processing ? 'text-primary animate-pulse' : 'text-primary/40'} />
                   </div>
 
-                  <div className="text-center">
+                  <div className="text-center px-4">
                     <p className="font-bold text-gray-700 text-lg">
                       {processing ? 'Processing…' : 'Ready to Scan'}
                     </p>
                     <p className="text-sm text-muted mt-2 max-w-sm mx-auto leading-relaxed">
-                      Point your Bluetooth or USB scanner at the QR code on your receipt. The system reads it automatically — no button press needed.
+                      Point your Bluetooth or USB scanner at the QR code on your receipt. The system reads it automatically.
                     </p>
                   </div>
 
-                  {/* Visual feedback bar */}
                   <div className="w-full max-w-xs h-2 bg-black/5 rounded-full overflow-hidden">
                     <div className={`h-full bg-primary rounded-full transition-all duration-200 ${processing ? 'w-full' : 'w-0'}`}/>
                   </div>
                 </div>
               )}
 
-              {/* Upload Screenshot mode */}
+              {/* Drag & Drop Upload mode */}
               {scanMode === 'upload' && (
                 <div className="w-full flex flex-col items-center gap-4 animate-in fade-in zoom-in-95 duration-200 py-4">
-                  <label className={`cursor-pointer flex flex-col items-center justify-center w-full max-w-sm h-56 border-2 border-dashed rounded-2xl transition-all ${processing ? 'bg-gray-100 border-gray-300 pointer-events-none' : 'border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50'}`}>
-                    <UploadCloud size={40} className={`mb-3 ${processing ? 'text-gray-400' : 'text-primary'}`} />
-                    <span className={`text-base font-bold ${processing ? 'text-gray-500' : 'text-primary'}`}>
-                      {processing ? 'Scanning Image...' : 'Tap to upload screenshot'}
+                  <label 
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className={`cursor-pointer flex flex-col items-center justify-center w-full max-w-sm h-64 border-2 border-dashed rounded-2xl transition-all duration-200 ${
+                      processing 
+                        ? 'bg-gray-100 border-gray-300 pointer-events-none' 
+                        : isDragging 
+                          ? 'border-primary bg-primary/10 scale-[1.02]' 
+                          : 'border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50'
+                    }`}
+                  >
+                    <UploadCloud size={48} className={`mb-4 transition-colors ${
+                      processing ? 'text-gray-400' : isDragging ? 'text-primary' : 'text-primary/70'
+                    }`} />
+                    
+                    <span className={`text-lg font-black tracking-tight ${
+                      processing ? 'text-gray-500' : isDragging ? 'text-primary' : 'text-gray-800'
+                    }`}>
+                      {processing ? 'Scanning Image...' : isDragging ? 'Drop Image Here' : 'Drag & Drop QR Code'}
                     </span>
-                    <span className="text-xs text-muted mt-2 px-6 text-center">
-                      Select an image from your gallery containing your request QR code.
+                    
+                    <span className="text-sm text-muted mt-2 px-6 text-center font-medium">
+                      {processing ? 'Please wait...' : 'or click to browse your files'}
                     </span>
+                    
                     <input 
                       type="file" 
                       accept="image/*" 
                       className="hidden" 
-                      onChange={handleFileUpload} 
+                      onChange={handleFileInput} 
                       disabled={processing}
                     />
                   </label>
@@ -234,14 +284,14 @@ export default function KioskStatus() {
                 <span className={`inline-block px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest bg-white shadow-sm border ${cfg.border} ${cfg.color}`}>
                   {requestData.status}
                 </span>
-                <h2 className="text-2xl font-bold text-gray-800 mt-4">Request #{requestData.id}</h2>
-                <p className="text-sm text-muted">{requestData.room_code || 'Global'} · {new Date(requestData.created_at).toLocaleDateString()}</p>
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mt-4">Request #{requestData.id}</h2>
+                <p className="text-xs sm:text-sm text-muted">{requestData.room_code || 'Global'} · {new Date(requestData.created_at).toLocaleDateString()}</p>
                 <p className={`text-sm font-semibold mt-1 ${cfg.color}`}>{cfg.text}</p>
               </div>
 
               {/* Progress timeline */}
               {!isTerminal && (
-                <div className="relative py-6 px-2">
+                <div className="relative py-6 px-1 sm:px-2 overflow-x-hidden">
                   <div className="absolute top-1/2 left-4 right-4 h-1 bg-black/5 -translate-y-1/2 rounded-full" />
                   <div
                     className="absolute top-1/2 left-4 h-1 bg-primary -translate-y-1/2 rounded-full transition-all duration-700"
@@ -254,14 +304,14 @@ export default function KioskStatus() {
                       const active    = currentStep === stepNum;
                       return (
                         <div key={idx} className="flex flex-col items-center gap-2">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md border-2 transition-all duration-500 ${
+                          <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shadow-md border-2 transition-all duration-500 ${
                             done   ? 'bg-primary text-white border-primary scale-110' :
                             active ? 'bg-white text-primary border-primary' :
                                      'bg-[#e0e5ec] text-muted border-white'
                           }`}>
-                            {step.icon}
+                            {React.cloneElement(step.icon, { className: "w-4 h-4 sm:w-5 sm:h-5" })}
                           </div>
-                          <span className={`text-[10px] font-bold uppercase tracking-wide ${done ? 'text-primary' : 'text-muted'}`}>
+                          <span className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-wide ${done ? 'text-primary' : 'text-muted'}`}>
                             {step.label}
                           </span>
                         </div>
@@ -272,18 +322,18 @@ export default function KioskStatus() {
               )}
 
               {/* Items list */}
-              <div className="bg-black/[0.03] p-4 rounded-xl border border-black/5">
-                <h3 className="text-xs font-bold text-muted uppercase tracking-wider mb-3">Items in Request</h3>
+              <div className="bg-black/[0.03] p-3 sm:p-4 rounded-xl border border-black/5">
+                <h3 className="text-[10px] sm:text-xs font-bold text-muted uppercase tracking-wider mb-3">Items in Request</h3>
                 <div className="space-y-2">
                   {(requestData.items ?? []).map((item, idx) => (
-                    <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-lg shadow-sm border border-black/5">
-                      <div>
-                        <p className="font-bold text-sm text-gray-800">{item.item_name}</p>
-                        <p className="text-[10px] font-mono text-muted">
+                    <div key={idx} className="flex justify-between items-center bg-white p-2.5 sm:p-3 rounded-lg shadow-sm border border-black/5 gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-xs sm:text-sm text-gray-800 truncate">{item.item_name}</p>
+                        <p className="text-[9px] sm:text-[10px] font-mono text-muted truncate">
                           {item.inventory_item_barcode || 'Batch Item'} · ×{item.quantity || item.qty_requested || 1}
                         </p>
                       </div>
-                      <span className={`text-xs font-bold uppercase px-2 py-1 rounded-full ${
+                      <span className={`text-[10px] sm:text-xs font-bold uppercase px-2 py-1 rounded-full whitespace-nowrap flex-shrink-0 ${
                         item.item_status === 'RETURNED'  ? 'bg-emerald-50 text-emerald-600' :
                         item.item_status === 'ISSUED'    ? 'bg-purple-50  text-purple-600'  :
                         item.item_status === 'CANCELLED' ? 'bg-gray-100   text-gray-400'    :
@@ -298,9 +348,9 @@ export default function KioskStatus() {
 
               {/* Return deadline */}
               {requestData.return_deadline && (
-                <div className="bg-red-50 p-4 rounded-xl border border-red-100 text-center">
-                  <p className="text-xs font-bold text-red-400 uppercase tracking-wider">Return Deadline</p>
-                  <p className="font-mono text-red-700 font-bold text-lg mt-1">
+                <div className="bg-red-50 p-3 sm:p-4 rounded-xl border border-red-100 text-center">
+                  <p className="text-[10px] sm:text-xs font-bold text-red-400 uppercase tracking-wider">Return Deadline</p>
+                  <p className="font-mono text-red-700 font-bold text-base sm:text-lg mt-1">
                     {new Date(requestData.return_deadline).toLocaleString()}
                   </p>
                 </div>
@@ -308,13 +358,13 @@ export default function KioskStatus() {
 
               {/* Members */}
               {requestData.members?.length > 0 && (
-                <div className="bg-black/[0.03] p-4 rounded-xl border border-black/5">
-                  <h3 className="text-xs font-bold text-muted uppercase tracking-wider mb-3">Group Members</h3>
+                <div className="bg-black/[0.03] p-3 sm:p-4 rounded-xl border border-black/5">
+                  <h3 className="text-[10px] sm:text-xs font-bold text-muted uppercase tracking-wider mb-3">Group Members</h3>
                   <div className="space-y-1.5">
                     {requestData.members.map((m, idx) => (
-                      <div key={idx} className="flex justify-between text-sm bg-white p-2.5 rounded-lg border border-black/5">
-                        <span className="font-medium text-gray-800">{m.full_name}</span>
-                        <span className="font-mono text-xs text-muted">{m.student_id !== 'N/A' ? m.student_id : 'Faculty'}</span>
+                      <div key={idx} className="flex justify-between text-xs sm:text-sm bg-white p-2 sm:p-2.5 rounded-lg border border-black/5">
+                        <span className="font-medium text-gray-800 truncate pr-2">{m.full_name}</span>
+                        <span className="font-mono text-[10px] sm:text-xs text-muted whitespace-nowrap">{m.student_id !== 'N/A' ? m.student_id : 'Faculty'}</span>
                       </div>
                     ))}
                   </div>
@@ -322,14 +372,14 @@ export default function KioskStatus() {
               )}
 
               {/* Scan another */}
-              <NeumorphButton className="w-full py-4" variant="primary" onClick={resetScanner}>
-                <Scan size={18} className="mr-2"/> Scan Another Request
+              <NeumorphButton className="w-full py-3.5 sm:py-4 text-sm font-black" variant="primary" onClick={resetScanner}>
+                <Scan size={18} className="mr-2"/> Scan Another
               </NeumorphButton>
             </div>
           )}
         </NeumorphCard>
 
-        <p className="text-center text-xs text-gray-400">
+        <p className="text-center text-[10px] sm:text-xs text-gray-400 pb-6 font-medium">
           InvenCEA · Equipment Management System
         </p>
       </div>

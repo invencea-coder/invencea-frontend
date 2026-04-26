@@ -1205,7 +1205,35 @@ export default function AdminRequests() {
         ) : (
           <div className="flex-1 bg-gray-50 p-4 md:p-6 overflow-hidden">
             <div className="w-full h-full bg-white rounded-2xl shadow-sm border border-black/10 overflow-hidden flex flex-col">
-              <AvailabilityCalendar roomId={user?.room_id} onDateSelect={handleCalendarDateSelect} selectedDate={selectedDate} requestCountByDate={requestCountByDate} onViewList={() => { setViewMode('list'); setActiveTab('PENDING'); }} />
+              <AvailabilityCalendar roomId={user?.room_id} onDateSelect={handleCalendarDateSelect} selectedDate={selectedDate} requestCountByDate={requestCountByDate} onViewList={() => { setViewMode('list'); setActiveTab('PENDING'); }}onManageBooking={(booking) => {
+                  // 1. Switch back to the list view
+                  setViewMode('list');
+                  setSelectedDate(null); 
+                  
+                  // 2. Figure out which tab this request belongs in
+                  let targetTab = 'ARCHIVED';
+                  const status = booking.status?.toUpperCase();
+                  
+                  if (!isExpiredRow(booking)) {
+                    if (['PENDING', 'PENDING APPROVAL'].includes(status)) targetTab = 'PENDING';
+                    else if (status === 'APPROVED') targetTab = 'APPROVED';
+                    else if (['ISSUED', 'PARTIALLY RETURNED'].includes(status)) targetTab = 'ISSUED';
+                  }
+                  
+                  // 3. Navigate to that tab and expand the specific row
+                  setActiveTab(targetTab); 
+                  setSearchQuery(String(booking.id)); 
+                  setExpandedRow(booking.id);
+
+                  // 4. Smooth UX: Auto-open the correct action modal based on the status!
+                  setTimeout(() => {
+                    if (status === 'APPROVED') {
+                      openIssueModal(booking);
+                    } else if (['PENDING', 'PENDING APPROVAL'].includes(status)) {
+                      handleApproveClick(booking);
+                    }
+                  }, 300); // Slight delay allows the list transition to finish first
+                }} />
             </div>
           </div>
         )}

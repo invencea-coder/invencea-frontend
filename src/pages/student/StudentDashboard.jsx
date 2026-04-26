@@ -1,7 +1,7 @@
 // src/pages/student/StudentDashboard.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, FileText, KeyRound, QrCode, AlertTriangle, Clock, Package, CheckCircle2, XCircle, Barcode, X } from 'lucide-react';
+import { PlusCircle, FileText, KeyRound, QrCode, AlertTriangle, Clock, Package, CheckCircle2, XCircle, Barcode } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuth } from '../../context/AuthContext.jsx';
@@ -60,12 +60,25 @@ export default function StudentDashboard() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Modal States
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [isConfirmPinModalOpen, setIsConfirmPinModalOpen] = useState(false);
+  
   const [pinForm, setPinForm] = useState({ current_pin: '', new_pin: '', confirm_pin: '' });
   const [changingPin, setChangingPin] = useState(false);
 
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [cancelling, setCancelling] = useState(false);
+
+  // Check if forced reset is required
+  const isForcedReset = user?.needs_password_reset || user?.needs_pin_reset;
+
+  useEffect(() => {
+    // Automatically open and lock the PIN modal if it's their first time
+    if (isForcedReset) {
+      setIsPinModalOpen(true);
+    }
+  }, [isForcedReset]);
 
   const loadRequests = () => {
     listRequests({})
@@ -118,19 +131,33 @@ export default function StudentDashboard() {
     if (onlyNums.length <= 4) setPinForm({ ...pinForm, [field]: onlyNums });
   };
 
-  const handlePinSubmit = async (e) => {
+  // Step 1: Pre-validate and open confirmation modal
+  const handlePinSubmitRequest = (e) => {
     e.preventDefault();
     if (pinForm.new_pin.length !== 4) return toast.error('New PIN must be exactly 4 digits.');
     if (pinForm.new_pin !== pinForm.confirm_pin) return toast.error('New PINs do not match.');
+    
+    setIsConfirmPinModalOpen(true);
+  };
 
+  // Step 2: Execute actual API call after confirmation
+  const executePinChange = async () => {
     setChangingPin(true);
     try {
       await changeStudentPin({ current_pin: pinForm.current_pin, new_pin: pinForm.new_pin });
       toast.success('Security PIN changed successfully!');
+      
+      setIsConfirmPinModalOpen(false);
       setIsPinModalOpen(false);
       setPinForm({ current_pin: '', new_pin: '', confirm_pin: '' });
+
+      // If it was a forced reset, reload to refresh the auth token/state
+      if (isForcedReset) {
+        window.location.reload();
+      }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to change PIN');
+      setIsConfirmPinModalOpen(false);
     } finally {
       setChangingPin(false);
     }
@@ -188,7 +215,7 @@ export default function StudentDashboard() {
           <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center border border-black/5">
             <FileText size={24} />
           </div>
-          <span className="text-sm font-black text-gray-700 tracking-tight">All Requests</span>
+          <span className="text-sm font-black text-gray-700 tracking-tight">Active Requests & History</span>
         </NeumorphCard>
       </div>
 
@@ -258,7 +285,7 @@ export default function StudentDashboard() {
       {history.length > 0 && (
         <div className="space-y-3 pt-4">
           <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1.5 ml-1">
-            <Package size={14} /> Past History
+            <Package size={14} /> History
           </h3>
           <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
             {history.slice(0, 3).map((r, idx) => (
@@ -279,6 +306,101 @@ export default function StudentDashboard() {
           </div>
         </div>
       )}
+
+      {/* ─── CHANGE PIN MODAL ─── */}
+      <NeumorphModal 
+        open={isPinModalOpen} 
+        onClose={() => { if (!isForcedReset) setIsPinModalOpen(false); }} 
+        title="Change Security PIN" 
+        size="sm"
+      >
+        <form onSubmit={handlePinSubmitRequest} className="space-y-4">
+          {isForcedReset && (
+            <div className="bg-blue-50 border border-blue-200 text-blue-700 p-3 rounded-xl text-xs font-bold flex items-start gap-2.5 shadow-sm">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <p className="leading-relaxed">Welcome! For your security, you must set a personal 4-digit PIN before accessing your dashboard.</p>
+            </div>
+          )}
+          
+          <div className="space-y-3">
+            <NeumorphInput 
+              label={isForcedReset ? "Default Current PIN" : "Current PIN"} 
+              type="password" 
+              value={pinForm.current_pin} 
+              onChange={(e) => handlePinChangeInput('current_pin', e.target.value)} 
+              placeholder="••••"
+              maxLength={4} 
+              required 
+            />
+            <NeumorphInput 
+              label="New 4-Digit PIN" 
+              type="password" 
+              value={pinForm.new_pin} 
+              onChange={(e) => handlePinChangeInput('new_pin', e.target.value)} 
+              placeholder="••••"
+              maxLength={4} 
+              required 
+            />
+            <NeumorphInput 
+              label="Confirm New PIN" 
+              type="password" 
+              value={pinForm.confirm_pin} 
+              onChange={(e) => handlePinChangeInput('confirm_pin', e.target.value)} 
+              placeholder="••••"
+              maxLength={4} 
+              required 
+            />
+          </div>
+
+          <div className="pt-4 flex gap-3 border-t border-black/5 mt-2">
+            {!isForcedReset && (
+              <NeumorphButton type="button" variant="outline" className="flex-1 py-3 font-bold" onClick={() => setIsPinModalOpen(false)}>
+                Cancel
+              </NeumorphButton>
+            )}
+            <NeumorphButton type="submit" variant="primary" className="flex-1 py-3 font-bold shadow-md shadow-primary/20">
+              {isForcedReset ? 'Save & Continue' : 'Update PIN'}
+            </NeumorphButton>
+          </div>
+        </form>
+      </NeumorphModal>
+
+      {/* ─── CONFIRMATION MODAL FOR PIN CHANGE ─── */}
+      <NeumorphModal 
+        open={isConfirmPinModalOpen} 
+        onClose={() => setIsConfirmPinModalOpen(false)} 
+        title="Confirm PIN Change" 
+        size="sm"
+      >
+        <div className="text-center pb-2">
+          <div className="w-16 h-16 bg-amber-50 border border-amber-200 text-amber-500 rounded-full flex items-center justify-center mx-auto shadow-inner mb-4">
+            <KeyRound size={28} />
+          </div>
+          <h3 className="text-lg font-black text-gray-800">Are you sure?</h3>
+          <p className="text-sm font-medium text-gray-500 mt-1 max-w-[250px] mx-auto">
+            You are about to change your security PIN. You will need this new PIN for all future logins.
+          </p>
+          
+          <div className="flex gap-3 pt-6 border-t border-black/5 mt-6">
+            <NeumorphButton 
+              variant="outline" 
+              className="flex-1 py-3 font-bold" 
+              onClick={() => setIsConfirmPinModalOpen(false)} 
+              disabled={changingPin}
+            >
+              Back
+            </NeumorphButton>
+            <NeumorphButton 
+              variant="primary" 
+              className="flex-1 py-3 font-bold shadow-md shadow-primary/20 bg-primary" 
+              onClick={executePinChange} 
+              loading={changingPin}
+            >
+              Yes, Change PIN
+            </NeumorphButton>
+          </div>
+        </div>
+      </NeumorphModal>
 
       {/* ─── DIGITAL TICKET & ITEM DETAILS MODAL ─── */}
       <NeumorphModal open={!!selectedTicket} onClose={() => setSelectedTicket(null)} title={`Request #${selectedTicket?.id}`} size="md">

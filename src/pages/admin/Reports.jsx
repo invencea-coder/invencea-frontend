@@ -171,7 +171,7 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
         {`
           @page { 
             size: A4 portrait; 
-            margin: 0; 
+            margin: 6mm 10mm; 
           }
           body { 
             -webkit-print-color-adjust: exact !important; 
@@ -180,14 +180,15 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
             margin: 0 !important;
             padding: 0 !important;
           }
-          body * { visibility: hidden !important; }
-          #printable-logbook, #printable-logbook * { visibility: visible !important; }
+          /* Collapse hidden siblings so they don't push the logbook down */
+          body * { visibility: hidden !important; height: 0 !important; min-height: 0 !important; overflow: hidden !important; }
+          #printable-logbook, #printable-logbook * { visibility: visible !important; height: auto !important; min-height: unset !important; overflow: visible !important; }
+
+          /* ⚡ KEY FIX: position:static lets browser paginate across multiple A4 pages.
+             position:absolute was pinning everything to page 1 and clipping the rest. */
           #printable-logbook { 
-            position: absolute; 
-            left: 0; 
-            top: 0; 
-            width: 100%; 
-            padding: 15mm; 
+            position: static !important;
+            width: 100% !important;
             font-family: Arial, Helvetica, sans-serif; 
             box-sizing: border-box; 
             background-color: #ffffff !important;
@@ -198,8 +199,25 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
             max-width: 100%; 
             border-collapse: collapse !important; 
             margin-top: 10px; 
-            table-layout: fixed; 
+            table-layout: fixed;
+            page-break-inside: auto !important;
           }
+
+          /* Repeat the column-header row on every new page */
+          thead { 
+            display: table-header-group !important; 
+          }
+
+          tbody { 
+            page-break-inside: auto !important; 
+          }
+
+          /* Never split a data row across pages */
+          tr { 
+            page-break-inside: avoid !important; 
+            page-break-after: auto !important; 
+          }
+
           th, td { 
             border: 1px solid #000 !important; 
             padding: 6px 4px; 
@@ -207,6 +225,7 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
             color: #000; 
             box-sizing: border-box;
             word-wrap: break-word;
+            overflow: visible !important;
             background-color: transparent !important; 
           }
           th { font-weight: bold; text-align: center; }

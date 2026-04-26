@@ -1,7 +1,7 @@
 // src/components/AvailabilityCalendar.jsx
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { format } from "date-fns";
-import { X, Clock, Package, ListTodo } from "lucide-react";
+import { X, Clock, Package, ListTodo, AlertTriangle, ArrowRightCircle } from "lucide-react";
 import api from "../api/axiosClient";
 
 const STATUS = {
@@ -55,21 +55,14 @@ function touchesDate(event, dateStr) {
   return start <= dayEnd && evEnd >= dayStart;
 }
 
-// ⚡ DYNAMIC EXPIRATION CHECKER
+// ⚡ DYNAMIC EXPIRATION & OVERDUE CHECKERS
 const isCalendarEventExpired = (ev) => {
   const status = String(ev.status || ev.request_status || '').toUpperCase();
-  // Active issuances are never expired
   if (['ISSUED', 'PARTIALLY RETURNED'].includes(status)) return false;
   
   const now = Date.now();
-  
-  // 15 minute grace period for scheduled pickups
-  if (ev.pickup_datetime) {
-    return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
-  }
-  if (ev.scheduled_time) {
-    return now > new Date(ev.scheduled_time).getTime() + 15 * 60_000;
-  }
+  if (ev.pickup_datetime) return now > new Date(ev.pickup_datetime).getTime() + 15 * 60_000;
+  if (ev.scheduled_time) return now > new Date(ev.scheduled_time).getTime() + 15 * 60_000;
   if (ev.pickup_start) {
     const e = new Date(ev.pickup_start); 
     e.setHours(23, 59, 59, 999);
@@ -83,12 +76,27 @@ const isCalendarEventExpired = (ev) => {
   return false;
 };
 
+const isEventOverdue = (ev) => {
+  const status = String(ev.status || ev.request_status || '').toUpperCase();
+  if (['ISSUED', 'PARTIALLY RETURNED'].includes(status) && ev.return_deadline) {
+    return Date.now() > new Date(ev.return_deadline).getTime();
+  }
+  return false;
+};
+
 const S = {
   navBtn: { background: "none", border: "0.5px solid #d1d0cc", borderRadius: "6px", cursor: "pointer", fontSize: "15px", color: "#111", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center" },
 };
 
-function StatusBadge({ status }) {
+function StatusBadge({ status, isOverdue }) {
   const cfg = STATUS[status] || STATUS.PENDING;
+  if (isOverdue) {
+    return (
+      <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-red-100 text-red-700 border border-red-200 shadow-sm">
+        <AlertTriangle size={10} /> Overdue
+      </span>
+    );
+  }
   return (
     <span style={{ fontSize: "9px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", padding: "2px 6px", borderRadius: "4px", background: cfg.barBg, color: cfg.barText, border: `1px solid ${cfg.barBorder}` }}>
       {cfg.label}
@@ -96,7 +104,7 @@ function StatusBadge({ status }) {
   );
 }
 
-export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDate, requestCountByDate, publicMode = false, onAddToCart, catalogNode, onViewList }) {
+export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDate, publicMode = false, catalogNode, onViewList, onManageBooking }) {
   const today = new Date();
   const [year, setYear]     = useState(today.getFullYear());
   const [month, setMonth]   = useState(today.getMonth());
@@ -116,15 +124,11 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
       const res = await api.get('/requests/calendar', { params: { room_id: roomId } });
       const fetchedData = Array.isArray(res.data.data) ? res.data.data : [];
       
-      // ⚡ STRICT WHITELIST, EXPIRATION, AND ROOM ISOLATION
       const validEvents = fetchedData.filter(ev => {
         const status = String(ev.status || ev.request_status || '').toUpperCase();
         const isWhitelisted = ['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(status);
-        
-        // Ensure the event belongs to this exact calendar's room
         const evRoomId = ev.room_id || ev.roomId;
         const isCorrectRoom = !evRoomId || String(evRoomId) === String(roomId);
-
         return isWhitelisted && isCorrectRoom && !isCalendarEventExpired(ev);
       });
 
@@ -189,7 +193,7 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
     <div style={{ display: "flex", width: "100%", height: "100%", fontFamily: "var(--font-sans, system-ui, sans-serif)", background: "#f8fafc", overflow: "hidden" }}>
 
       {/* ───────── LEFT: Monthly grid ───────── */}
-      <div style={{ width: panelOpen ? "360px" : "100%", flexShrink: 0, transition: "width 0.3s ease", background: "#fff", borderRight: panelOpen ? "1px solid #e2e8f0" : "none", display: "flex", flexDirection: "column", padding: "24px", gap: "16px", overflowY: "auto" }}>
+      <div style={{ width: panelOpen ? "360px" : "100%", flexShrink: 0, transition: "width 0.3s ease", background: "#fff", borderRight: panelOpen ? "1px solid #e2e8f0" : "none", display: "flex", flexDirection: "column", padding: "24px", gap: "16px", overflowY: "auto" }} className="custom-scrollbar">
         <div style={{ display: "flex", alignItems: "flex-start", justifyItems: "space-between", gap: "12px" }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: "16px", fontWeight: 800, color: "#111827" }}>Availability Calendar</div>
@@ -236,17 +240,32 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
             dayEvts.forEach(e => { groups[e.status] = (groups[e.status] || 0) + 1; });
             const hasMatch = hasFilter && dayEvts.length > 0;
 
+            // Check if any event on this day is overdue
+            const hasOverdue = dayEvts.some(isEventOverdue);
+
             return (
               <div key={i} onClick={() => cur && handleCellClick(date)}
                 style={{
                   padding: "6px 4px", borderRadius: "10px", cursor: cur ? "pointer" : "default",
                   background: isSel ? "#EFF6FF" : hasMatch ? "#FEF3C7" : isToday ? "#F3F4F6" : "transparent",
-                  border: isSel ? "1.5px solid #3B82F6" : hasMatch ? "1.5px solid #F59E0B" : isToday ? "1.5px solid #D1D5DB" : "1.5px solid transparent",
+                  border: isSel ? "1.5px solid #3B82F6" : hasOverdue ? "1.5px solid #FECACA" : hasMatch ? "1.5px solid #F59E0B" : isToday ? "1.5px solid #D1D5DB" : "1.5px solid transparent",
                   opacity: cur ? 1 : 0.25, transition: "all 0.15s", minHeight: "56px", position: "relative", display: "flex", flexDirection: "column", alignItems: "center"
                 }}>
-                <div style={{ fontSize: "13px", fontWeight: isToday || isSel ? 800 : 600, color: isSel ? "#1D4ED8" : isToday ? "#374151" : hasMatch ? "#B45309" : "#111827", marginBottom: "4px" }}>
+                
+                {/* ⚡ UPDATED: Added the overdue icon next to the date */}
+                <div style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  gap: "2px", 
+                  fontSize: "13px", 
+                  fontWeight: isToday || isSel ? 800 : 600, 
+                  color: isSel ? "#1D4ED8" : hasOverdue ? "#DC2626" : isToday ? "#374151" : hasMatch ? "#B45309" : "#111827", 
+                  marginBottom: "4px" 
+                }}>
                   {date.getDate()}
+                  {hasOverdue && <AlertTriangle size={12} className="text-red-500 animate-pulse" />}
                 </div>
+
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "3px", justifyContent: "center" }}>
                   {Object.entries(groups).map(([status, c]) => {
                     const cfg = STATUS[status] || STATUS.PENDING;
@@ -263,7 +282,7 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
 
       {/* ───────── RIGHT: Vertical Agenda Panel ───────── */}
       {panelOpen && (
-        <div className="flex-1 flex flex-col overflow-hidden bg-slate-50 min-w-0 border-l border-gray-200 relative">
+        <div className="flex-1 flex flex-col overflow-hidden bg-slate-50 min-w-0 border-l border-gray-200 relative animate-in slide-in-from-right-8 duration-300">
           
           {/* Header */}
           <div className="px-6 py-4 bg-white border-b border-gray-200 flex justify-between items-center shrink-0">
@@ -285,52 +304,53 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
           <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 custom-scrollbar">
             
             {selEvents.length === 0 ? (
-              <div className="text-center text-gray-400 py-10">
+              <div className="text-center text-gray-400 py-10 animate-in fade-in duration-500">
                 <div className="text-3xl mb-3">✨</div>
                 <div className="text-sm font-semibold">
                   {hasFilter ? `No items matching "${itemFilter}" on this date.` : "The laboratory is completely free on this date!"}
                 </div>
               </div>
             ) : (
-              <div className="relative">
+              <div className="relative animate-in fade-in duration-300">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-5 flex items-center gap-2"><Clock size={14}/> Schedule Timeline</h3>
                 
-                {/* Vertical Line */}
-                <div className="absolute left-[79px] top-12 bottom-4 w-px bg-gray-200 z-0"></div>
+                {/* Vertical Line aligned with dots */}
+                <div className="absolute left-[73px] top-12 bottom-4 w-px bg-gray-200 z-0"></div>
                 
                 <div className="flex flex-col gap-4 relative z-10">
                   {selEvents.sort((a,b) => (getEventRange(a).start?.getTime()||0) - (getEventRange(b).start?.getTime()||0)).map(event => {
                     const { start, end } = getEventRange(event);
                     const cfg = STATUS[event.status] || STATUS.PENDING;
-                    
-                    // Check if it spans multiple days
+                    const overdue = isEventOverdue(event);
                     const spansMultipleDays = start && end && start.toDateString() !== end.toDateString();
 
                     return (
                       <div key={event.id} onClick={() => setSelectedBooking(event)} className="flex items-start gap-4 group cursor-pointer">
                         
-                        <div className="w-16 pt-2.5 text-right shrink-0 bg-slate-50">
+                        {/* Time Block */}
+                        <div className="w-14 pt-2.5 text-right shrink-0 bg-slate-50">
                           <p className="text-xs font-bold text-gray-900">{fmtTime(start)}</p>
-                          <p className="text-[10px] font-medium text-gray-400 mt-0.5 leading-tight">
+                          <p className={`text-[10px] font-medium mt-0.5 leading-tight ${overdue ? 'text-red-500 font-bold' : 'text-gray-400'}`}>
                             {end ? (
                               spansMultipleDays ? (
-                                <>{fmtTime(end)}<br/><span className="text-[9px] text-blue-500">{fmtDateShort(end)}</span></>
+                                <>{fmtTime(end)}<br/><span className={overdue ? "text-red-500" : "text-blue-500"}>{fmtDateShort(end)}</span></>
                               ) : fmtTime(end)
                             ) : '—'}
                           </p>
                         </div>
                         
-                        <div className="pt-3 shrink-0 bg-slate-50 py-2">
-                          <div className="w-3 h-3 rounded-full bg-white border-2 group-hover:scale-125 transition-transform shadow-sm" style={{ borderColor: cfg.dot }}></div>
+                        {/* Dot */}
+                        <div className="pt-3 shrink-0 bg-slate-50 py-2 relative z-10">
+                          <div className={`w-3 h-3 rounded-full bg-white border-2 group-hover:scale-125 transition-transform shadow-sm ${overdue ? 'border-red-500' : ''}`} style={{ borderColor: overdue ? '#EF4444' : cfg.dot }}></div>
                         </div>
                         
-                        {/* ⚡ COMPACTED EVENT CARD */}
-                        <div className="flex-1 bg-white border border-gray-200 rounded-xl p-3 shadow-sm group-hover:border-blue-300 group-hover:shadow-md transition-all">
+                        {/* Event Card */}
+                        <div className={`flex-1 bg-white border rounded-xl p-3 shadow-sm transition-all ${overdue ? 'border-red-300 group-hover:shadow-md group-hover:border-red-400 bg-red-50/30' : 'border-gray-200 group-hover:border-blue-300 group-hover:shadow-md'}`}>
                           <div className="flex justify-between items-start mb-1.5">
-                            <StatusBadge status={event.status} />
-                            <span className="text-[10px] font-medium text-gray-500">{event.items?.length || 0} Item{event.items?.length !== 1 ? 's' : ''}</span>
+                            <StatusBadge status={event.status} isOverdue={overdue} />
+                            <span className="text-[10px] font-medium text-gray-500 mt-0.5">{event.items?.length || 0} Item{event.items?.length !== 1 ? 's' : ''}</span>
                           </div>
-                          <p className="text-xs font-bold text-gray-800 truncate">
+                          <p className={`text-xs font-bold truncate ${overdue ? 'text-red-900' : 'text-gray-800'}`}>
                             {publicMode ? "Reserved Window" : (event.requester_name || "Unknown")}
                           </p>
                           {event.items?.length > 0 && (
@@ -347,7 +367,7 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
               </div>
             )}
 
-            {/* ⚡ ACTION BUTTON FOR ADMINS */}
+            {/* ACTION BUTTON FOR ADMINS */}
             {onViewList && (
               <div className="pt-4 border-t border-gray-200 mt-auto">
                 <button 
@@ -359,7 +379,6 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
               </div>
             )}
 
-            {/* INJECTING THE FULL CATALOG ONLY WHEN TIMELINE IS VISIBLE */}
             {catalogNode}
 
           </div>
@@ -367,6 +386,8 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
           {/* ───────── MODAL POPUP FOR BOOKING DETAILS ───────── */}
           {selectedBooking && (() => {
             const { start, end } = getEventRange(selectedBooking);
+            const overdue = isEventOverdue(selectedBooking);
+
             return (
               <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={() => setSelectedBooking(null)}>
                 <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
@@ -388,7 +409,7 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
                     {/* Status & User */}
                     <div>
                       <div className="flex items-center gap-2 mb-2">
-                        <StatusBadge status={selectedBooking.status} />
+                        <StatusBadge status={selectedBooking.status} isOverdue={overdue} />
                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                           {publicMode ? 'Public View' : (selectedBooking.requester_type || 'User')}
                         </span>
@@ -401,25 +422,27 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
                       )}
                     </div>
 
-                    {/* ⚡ UPDATED Time Block (With Dates) */}
-                    <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-4 flex items-start gap-3">
+                    {/* Time Block (With Dates & Overdue Highlight) */}
+                    <div className={`border rounded-xl p-4 flex items-start gap-3 ${overdue ? 'bg-red-50/50 border-red-200' : 'bg-blue-50/50 border-blue-100'}`}>
                       <div className="mt-0.5">
-                        <div className="w-2 h-2 rounded-full bg-blue-500 mb-1"></div>
-                        <div className="w-0.5 h-6 bg-blue-200 mx-auto"></div>
-                        <div className="w-2 h-2 rounded-full bg-blue-300 mt-1"></div>
+                        <div className={`w-2 h-2 rounded-full mb-1 ${overdue ? 'bg-red-500' : 'bg-blue-500'}`}></div>
+                        <div className={`w-0.5 h-6 mx-auto ${overdue ? 'bg-red-200' : 'bg-blue-200'}`}></div>
+                        <div className={`w-2 h-2 rounded-full mt-1 ${overdue ? 'bg-red-500 animate-pulse' : 'bg-blue-300'}`}></div>
                       </div>
                       <div className="flex-1 space-y-3 text-sm">
                         <div>
-                          <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Start Time</p>
-                          <p className="font-semibold text-gray-900">
-                            {fmtTime(start)} <span className="text-[11px] text-gray-500 font-medium ml-1">({fmtDateShort(start)})</span>
+                          <p className={`text-[10px] font-bold uppercase tracking-widest ${overdue ? 'text-red-500' : 'text-blue-500'}`}>Start Time</p>
+                          <p className={`font-semibold ${overdue ? 'text-red-900' : 'text-gray-900'}`}>
+                            {fmtTime(start)} <span className={`text-[11px] font-medium ml-1 ${overdue ? 'text-red-600' : 'text-gray-500'}`}>({fmtDateShort(start)})</span>
                           </p>
                         </div>
                         <div>
-                          <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Expected Return</p>
-                          <p className="font-semibold text-gray-900">
+                          <p className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${overdue ? 'text-red-600' : 'text-blue-500'}`}>
+                            Expected Return {overdue && <AlertTriangle size={10} />}
+                          </p>
+                          <p className={`font-semibold ${overdue ? 'text-red-700' : 'text-gray-900'}`}>
                             {end ? (
-                              <>{fmtTime(end)} <span className="text-[11px] text-gray-500 font-medium ml-1">({fmtDateShort(end)})</span></>
+                              <>{fmtTime(end)} <span className={`text-[11px] font-medium ml-1 ${overdue ? 'text-red-500' : 'text-gray-500'}`}>({fmtDateShort(end)})</span></>
                             ) : '—'}
                           </p>
                         </div>
@@ -459,8 +482,23 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
                         ))}
                       </div>
                     </div>
-
                   </div>
+
+                  {/* ⚡ NEW ACTION BUTTON: Process Request */}
+                  {onManageBooking && !publicMode && (
+                    <div className="p-4 border-t border-gray-100 bg-slate-50">
+                      <button 
+                        onClick={() => {
+                          setSelectedBooking(null);
+                          onManageBooking(selectedBooking);
+                        }}
+                        className="w-full py-3.5 bg-gray-900 text-white font-black text-sm rounded-xl hover:bg-black transition-all flex items-center justify-center gap-2 shadow-lg shadow-gray-900/20 active:scale-[0.98]"
+                      >
+                        Process Request <ArrowRightCircle size={16} />
+                      </button>
+                    </div>
+                  )}
+
                 </div>
               </div>
             );

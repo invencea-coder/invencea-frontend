@@ -9,9 +9,9 @@ import { QRCodeSVG } from 'qrcode.react';
 import api from '../../api/axiosClient.js';
 
 const roles = [
-  { label: 'Administrator', sub: 'Manage inventory & requests', icon: Shield,        path: '/login/admin',   color: 'from-primary/20 to-accent/10' },
-  { label: 'Faculty',       sub: 'Gmail OTP login',             icon: BookOpen,      path: '/login/faculty', color: 'from-info/10 to-primary/5'    },
-  { label: 'Student',       sub: 'Student ID + Password',           icon: GraduationCap, path: '/login/student', color: 'from-success/10 to-info/5'    },
+  { label: 'Admins & System Manager', sub: 'Sign in with Email & Password', icon: Shield,        path: '/login/admin',   color: 'from-primary/20 to-accent/10' },
+  { label: 'Faculty',       sub: 'Sign in via Gmail OTP',         icon: BookOpen,      path: '/login/faculty', color: 'from-info/10 to-primary/5'    },
+  { label: 'Student',       sub: 'Sign in with Student ID & PIN', icon: GraduationCap, path: '/login/student', color: 'from-success/10 to-info/5'    },
 ];
 
 // Helper to color-code the status in the modal

@@ -65,14 +65,15 @@ const MAX_VISIBLE = 4;
 
 const HONORIFICS = new Set(['mr.', 'mrs.', 'ms.', 'miss', 'dr.', 'prof.', 'sr.', 'jr.']);
 
-function getFirstName(fullName) {
-  if (!fullName) return 'Admin';
-  const parts = fullName.trim().split(/\s+/);
-  for (const part of parts) {
-    if (!HONORIFICS.has(part.toLowerCase())) return part;
-  }
-  return parts[parts.length - 1] || 'Admin';
-}
+const getFirstName = (fullName) => {
+  if (!fullName) return '';
+
+  // 1. Strip out common titles (add any others you might use)
+  const cleanName = fullName.replace(/^(Engr\.|Dr\.|Prof\.|Mr\.|Mrs\.|Ms\.|Miss)\s+/i, '');
+
+  // 2. Split the cleaned name by spaces and grab the first word
+  return cleanName.split(' ')[0];
+};
 
 export default function AdminDashboard() {
   const navigate = useNavigate();

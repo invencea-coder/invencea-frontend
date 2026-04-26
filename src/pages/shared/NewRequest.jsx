@@ -2,11 +2,13 @@
  * NewRequest.jsx — Lab Equipment Reservation (Production-Grade)
  *
  * Architecture Improvements:
+ * - Integrated Custom 12-hour AM/PM Time Pickers for cross-browser consistency.
  * - Centralized `getAvailableQtyAtSlot` for bulletproof stock calculations.
  * - Non-destructive timeframe editing (Cart persists across date changes).
  * - Explicit error reporting for time boundaries (Lunch, Past-time, Overlaps).
  * - Debounced WebSockets to prevent UI thrashing on high-traffic networks.
  * - Slide-up Floating Cart UI for optimal mobile & desktop UX.
+ * - Accessibility upgrades to typography and focus states.
  */
 
 import React, {
@@ -127,6 +129,68 @@ const clampToDayMins = (dateStr, tsStart, tsEnd) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Child Components
 // ─────────────────────────────────────────────────────────────────────────────
+
+const CustomTimePicker = memo(({ value, onChange }) => {
+  const hours = Array.from({ length: 12 }, (_, i) => (i + 1).toString().padStart(2, '0'));
+  const minutes = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
+
+  const getTimeParts = (time24) => {
+    if (!time24) return { h: '07', m: '00', p: 'AM' };
+    const [hours24, mins] = time24.split(':');
+    let h = parseInt(hours24, 10);
+    const p = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return { h: h.toString().padStart(2, '0'), m: mins, p };
+  };
+
+  const { h: currentHour, m: currentMinute, p: currentPeriod } = getTimeParts(value);
+
+  const handleTimeChange = (h, m, p) => {
+    let hour24 = parseInt(h, 10);
+    if (p === 'PM' && hour24 !== 12) hour24 += 12;
+    if (p === 'AM' && hour24 === 12) hour24 = 0;
+    onChange(`${hour24.toString().padStart(2, '0')}:${m}`);
+  };
+
+  return (
+    <div className="relative flex items-center w-full bg-slate-50 border border-black/10 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 rounded-xl pl-9 pr-2 py-1.5 transition-all">
+      <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+
+      <div className="flex items-center flex-1">
+        <select
+          value={currentHour}
+          onChange={(e) => handleTimeChange(e.target.value, currentMinute, currentPeriod)}
+          className="bg-transparent text-sm font-black text-gray-800 outline-none cursor-pointer appearance-none py-1"
+        >
+          {hours.map(h => <option key={`h-${h}`} value={h}>{h}</option>)}
+        </select>
+        <span className="text-[10px] text-gray-400 font-bold ml-0.5 uppercase">hr</span>
+
+        <span className="text-gray-300 font-bold mx-1.5">:</span>
+
+        <select
+          value={currentMinute}
+          onChange={(e) => handleTimeChange(currentHour, e.target.value, currentPeriod)}
+          className="bg-transparent text-sm font-black text-gray-800 outline-none cursor-pointer appearance-none py-1"
+        >
+          {minutes.map(m => <option key={`m-${m}`} value={m}>{m}</option>)}
+        </select>
+        <span className="text-[10px] text-gray-400 font-bold ml-0.5 uppercase">min</span>
+      </div>
+
+      <select
+        value={currentPeriod}
+        onChange={(e) => handleTimeChange(currentHour, currentMinute, e.target.value)}
+        className="ml-auto bg-white border border-gray-200/80 shadow-sm rounded-lg px-2.5 py-1.5 text-[11px] font-black text-gray-700 outline-none cursor-pointer hover:bg-gray-50 transition-colors"
+      >
+        <option value="AM">AM</option>
+        <option value="PM">PM</option>
+      </select>
+    </div>
+  );
+});
+CustomTimePicker.displayName = 'CustomTimePicker';
+
 const TimelineBar = memo(({ bookings = [], pickedWindow = null, compact = false }) => {
   const clamp = (v) => Math.min(Math.max(v, DAY_START_MINS), DAY_END_MINS);
   const pct   = (v) => ((clamp(v) - DAY_START_MINS) / DAY_RANGE_MINS) * 100;
@@ -159,7 +223,7 @@ const TimelineBar = memo(({ bookings = [], pickedWindow = null, compact = false 
 TimelineBar.displayName = 'TimelineBar';
 
 const StepBadge = ({ step, complete, locked }) => (
-  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-black transition-all ${complete ? 'bg-emerald-500 text-white' : locked ? 'bg-gray-200 text-gray-400' : 'bg-primary/10 text-primary'}`}>
+  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-black transition-all ${complete ? 'bg-emerald-500 text-white' : locked ? 'bg-gray-200 text-gray-400' : 'bg-primary/10 text-primary'}`}>
     {complete ? <Check size={12} /> : step}
   </div>
 );
@@ -167,20 +231,20 @@ const StepBadge = ({ step, complete, locked }) => (
 const CartRow = memo(({ item, onAdjust, onRemove }) => {
   const isUnit = item.inventory_mode === 'unit';
   return (
-    <div className="flex items-center justify-between gap-3 bg-slate-50 border border-black/6 rounded-xl px-4 py-3">
+    <div className="flex items-center justify-between gap-3 bg-slate-50 border border-black/5 rounded-xl px-4 py-3">
       <div className="flex-1 min-w-0">
         <p className="text-sm font-black text-gray-800 truncate">{item.name}</p>
-        {item.barcode && <p className="text-[10px] font-mono text-gray-400 mt-0.5 truncate">{item.barcode}</p>}
-        {!isUnit && <p className="text-[10px] text-gray-400 mt-0.5 font-medium">Qty: {item.req_qty} / {item._avail} available</p>}
+        {item.barcode && <p className="text-[11px] font-mono text-gray-400 mt-0.5 truncate">{item.barcode}</p>}
+        {!isUnit && <p className="text-[11px] text-gray-400 mt-0.5 font-medium">Qty: {item.req_qty} / {item._avail} available</p>}
       </div>
       <div className="flex items-center gap-1.5 flex-shrink-0">
         {isUnit ? (
           <button onClick={() => onRemove(item)} aria-label="Remove" className="w-8 h-8 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"><Trash2 size={16} /></button>
         ) : (
           <>
-            <button onClick={() => onAdjust(item, -1)} aria-label="Decrease" className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors"><Minus size={14} /></button>
+            <button onClick={() => onAdjust(item, -1)} aria-label="Decrease" className="w-8 h-8 bg-gray-200/60 rounded-lg flex items-center justify-center text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors"><Minus size={14} /></button>
             <span className="w-8 text-center text-sm font-black text-gray-800 tabular-nums">{item.req_qty}</span>
-            <button onClick={() => onAdjust(item, +1)} disabled={item.req_qty >= item._avail} aria-label="Increase" className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center text-gray-600 hover:bg-teal-50 hover:text-teal-700 transition-colors disabled:opacity-40"><Plus size={14} /></button>
+            <button onClick={() => onAdjust(item, +1)} disabled={item.req_qty >= item._avail} aria-label="Increase" className="w-8 h-8 bg-gray-200/60 rounded-lg flex items-center justify-center text-gray-600 hover:bg-teal-50 hover:text-teal-700 transition-colors disabled:opacity-40"><Plus size={14} /></button>
             <button onClick={() => onRemove(item)} aria-label="Remove" className="w-8 h-8 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors ml-1"><Trash2 size={16} /></button>
           </>
         )}
@@ -201,16 +265,16 @@ const InventoryUnitRow = memo(({ item, inCart, bookings, visualPickedWindow, get
       onKeyDown={(e) => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) inCart ? onRemove(item) : onAdd(item); }}
       onClick={() => { if (!disabled) inCart ? onRemove(item) : onAdd(item); }}
       className={`flex items-center gap-3 px-3 py-3 rounded-xl border transition-all select-none
-        ${disabled ? 'bg-gray-50 border-gray-100 opacity-55 cursor-not-allowed' : inCart ? 'bg-teal-50 border-teal-300 cursor-pointer' : 'bg-white border-black/8 hover:border-teal-300 hover:shadow-sm cursor-pointer'}`}
+        ${disabled ? 'bg-gray-50 border-gray-100 opacity-55 cursor-not-allowed' : inCart ? 'bg-teal-50 border-teal-300 cursor-pointer' : 'bg-white border-black/5 hover:border-teal-300 hover:shadow-sm cursor-pointer'}`}
     >
-      <span className="text-[10px] font-mono font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded flex-shrink-0 tracking-wide">{item.barcode || '—'}</span>
+      <span className="text-[11px] font-mono font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded flex-shrink-0 tracking-wide">{item.barcode || '—'}</span>
       <div className="flex-1 min-w-0">
         {visualBookings.length > 0 ? (
           <>
             <TimelineBar bookings={visualBookings} pickedWindow={visualPickedWindow} compact />
             <div className="flex flex-wrap gap-1 mt-1.5">
               {visualBookings.map((b, i) => (
-                <span key={i} className={`text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${disabled ? 'text-red-700 bg-red-100' : 'text-amber-700 bg-amber-50'}`}>{b.label}</span>
+                <span key={i} className={`text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${disabled ? 'text-red-700 bg-red-100' : 'text-amber-700 bg-amber-50'}`}>{b.label}</span>
               ))}
             </div>
           </>
@@ -269,10 +333,8 @@ const InventoryGroupCard = memo(({ group, cart, pickedWindowTs, visualPickedWind
     setExpanded(prev => !prev);
   };
 
-  const inCartForItem = useCallback((item) => cart.some(c => cartKeyOf(c) === cartKeyOf(item)), [cart]);
-
   return (
-    <div className={`rounded-2xl border-2 overflow-hidden transition-all ${fullyUnavail ? 'border-gray-100 opacity-55' : cartCount > 0 || cartTotalQty > 0 ? 'border-teal-300 shadow-sm shadow-teal-50' : 'border-black/6 shadow-sm'}`}>
+    <div className={`rounded-2xl border-2 overflow-hidden transition-all ${fullyUnavail ? 'border-gray-100 opacity-55' : cartCount > 0 || cartTotalQty > 0 ? 'border-teal-300 shadow-sm shadow-teal-50' : 'border-black/5 shadow-sm'}`}>
       <div
         role={isFungible ? 'region' : 'button'}
         tabIndex={isFungible || fullyUnavail ? -1 : 0}
@@ -288,13 +350,13 @@ const InventoryGroupCard = memo(({ group, cart, pickedWindowTs, visualPickedWind
             <p className={`font-black text-sm truncate ${fullyUnavail ? 'text-gray-500' : 'text-gray-900'}`}>{group.name}</p>
             {selectedDate && visualBookings.length > 0 && <div className="mt-1 mb-1"><TimelineBar bookings={visualBookings} pickedWindow={visualPickedWindow} compact /></div>}
             <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-              {group.kind === 'consumable' && <span className="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">Consumable</span>}
-              {allBookedNow ? <span className="text-[9px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded flex items-center gap-1"><Clock size={10} /> All booked</span>
-              : allOut ? <span className="text-[9px] font-black text-red-500 bg-red-50 px-2 py-0.5 rounded flex items-center gap-1"><PackageX size={10} /> Checked out</span>
-              : step2Done && freeAtSlot !== null ? <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">{freeAtSlot}/{group.totalUnits} free</span>
-              : <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">{group.totalAvail} / {group.totalUnits} available</span>}
-              {group.items.length > 1 && !isFungible && <span className="text-[9px] text-gray-400 font-medium">{group.items.length} units</span>}
-              {(cartCount > 0 || cartTotalQty > 0) && <span className="text-[9px] font-black text-teal-700 bg-teal-100 px-2 py-0.5 rounded">{isFungible ? `${cartTotalQty} in cart` : `${cartCount} in cart`}</span>}
+              {group.kind === 'consumable' && <span className="text-[10px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">Consumable</span>}
+              {allBookedNow ? <span className="text-[10px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded flex items-center gap-1"><Clock size={10} /> All booked</span>
+              : allOut ? <span className="text-[10px] font-black text-red-500 bg-red-50 px-2 py-0.5 rounded flex items-center gap-1"><PackageX size={10} /> Checked out</span>
+              : step2Done && freeAtSlot !== null ? <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">{freeAtSlot}/{group.totalUnits} free</span>
+              : <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">{group.totalAvail} / {group.totalUnits} available</span>}
+              {group.items.length > 1 && !isFungible && <span className="text-[10px] text-gray-400 font-medium">{group.items.length} units</span>}
+              {(cartCount > 0 || cartTotalQty > 0) && <span className="text-[10px] font-black text-teal-700 bg-teal-100 px-2 py-0.5 rounded">{isFungible ? `${cartTotalQty} in cart` : `${cartCount} in cart`}</span>}
             </div>
           </div>
         </div>
@@ -731,7 +793,7 @@ export default function NewRequest() {
           <h1 className="text-3xl font-black text-gray-900 mb-2">Select a Laboratory</h1>
           <p className="text-gray-500 font-medium mb-8">Choose your room to begin booking.</p>
           <select
-            className="w-full max-w-sm bg-white border-2 border-primary/20 hover:border-primary shadow-lg rounded-2xl px-6 py-4 text-lg font-black text-gray-800 outline-none cursor-pointer transition-all"
+            className="w-full max-w-sm bg-white border-2 border-primary/20 hover:border-primary shadow-lg rounded-2xl px-6 py-4 text-lg font-black text-gray-800 outline-none cursor-pointer transition-all appearance-none"
             value={selectedRoomId}
             onChange={e => setSelectedRoomId(e.target.value)}
           >
@@ -758,7 +820,7 @@ export default function NewRequest() {
             <div className="flex items-center gap-2.5 min-w-0">
               <MapPin size={15} className="text-primary flex-shrink-0" />
               <div className="min-w-0">
-                <p className="text-[10px] text-gray-400 font-medium leading-none mb-0.5">Booking for</p>
+                <p className="text-[11px] text-gray-400 font-medium leading-none mb-0.5">Booking for</p>
                 <p className="text-sm font-black leading-none truncate">{currentRoom?.name || currentRoom?.code}</p>
               </div>
             </div>
@@ -775,11 +837,11 @@ export default function NewRequest() {
               <div className="border-b border-black/5">
                 <div className="px-4 py-3 flex items-center gap-2.5">
                   <StepBadge step="1" complete={step1Done} locked={false} />
-                  <CalendarDays size={13} className={step1Done ? 'text-emerald-600' : 'text-gray-500'} />
+                  <CalendarDays size={14} className={step1Done ? 'text-emerald-600' : 'text-gray-500'} />
                   <span className={`text-xs font-black uppercase tracking-wider ${step1Done ? 'text-emerald-700' : 'text-gray-700'}`}>Pick a Start Date</span>
                 </div>
                 <div className="px-4 pb-4">
-                  <div className="h-[85vh] min-h-[650px] md:h-[550px] lg:h-[600px] border border-black/10 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col relative">
+                  <div className="h-[80vh] min-h-[500px] md:h-[550px] border border-black/10 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col relative">
                     <AvailabilityCalendar
                       roomId={selectedRoomId}
                       onDateSelect={handleDateSelect}
@@ -802,7 +864,7 @@ export default function NewRequest() {
             ) : (
               <div className="border-b border-black/5 px-4 py-2.5 flex items-center gap-3 bg-white">
                 <div className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center flex-shrink-0"><Check size={12} /></div>
-                <CalendarDays size={13} className="text-emerald-600 flex-shrink-0" />
+                <CalendarDays size={14} className="text-emerald-600 flex-shrink-0" />
                 <p className="flex-1 text-sm font-black text-gray-800">{fmtDateShort(selectedDate)}</p>
                 <button onClick={() => setCalendarOpen(true)} className="text-xs font-bold text-gray-400 hover:text-primary bg-gray-100 hover:bg-primary/10 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap flex-shrink-0">Change Start Date</button>
               </div>
@@ -813,7 +875,7 @@ export default function NewRequest() {
                 <div className="px-4 py-3 flex items-center justify-between gap-2.5">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <StepBadge step="2" complete={step2Done} locked={false} />
-                    <Timer size={13} className={step2Done ? 'text-emerald-600 flex-shrink-0' : 'text-gray-500 flex-shrink-0'} />
+                    <Timer size={14} className={step2Done ? 'text-emerald-600 flex-shrink-0' : 'text-gray-500 flex-shrink-0'} />
                     <span className={`text-xs font-black uppercase tracking-wide truncate ${step2Done ? 'text-emerald-700' : 'text-gray-700'}`}>
                       {step2Done ? `${pickupTimeDisplay} – ${returnTimeDisplay} ${bookingMode === 'multiday' ? `(${returnDateDisplay})` : ''}` : 'Pick a timeframe'}
                     </span>
@@ -826,15 +888,15 @@ export default function NewRequest() {
                 {!isTimeframeConfirmed && (
                   <div className="px-4 pb-4 space-y-4">
                     <div className="flex p-1 bg-gray-100 rounded-xl">
-                      <button onClick={() => { setBookingMode('sameday'); setDuration(null); setEndDate(''); setReturnTime(''); }} className={`flex-1 py-2 text-xs font-black rounded-lg transition-all ${bookingMode === 'sameday' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>Same Day Return</button>
-                      <button onClick={() => { setBookingMode('multiday'); setDuration(null); setEndDate(''); setReturnTime(''); }} className={`flex-1 py-2 text-xs font-black rounded-lg transition-all flex items-center justify-center gap-1.5 ${bookingMode === 'multiday' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}><CalendarRange size={14} /> Multi-Day</button>
+                      <button onClick={() => { setBookingMode('sameday'); setDuration(null); setEndDate(''); setReturnTime(''); }} className={`flex-1 py-2.5 text-xs font-black rounded-lg transition-all ${bookingMode === 'sameday' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>Same Day Return</button>
+                      <button onClick={() => { setBookingMode('multiday'); setDuration(null); setEndDate(''); setReturnTime(''); }} className={`flex-1 py-2.5 text-xs font-black rounded-lg transition-all flex items-center justify-center gap-1.5 ${bookingMode === 'multiday' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}><CalendarRange size={14} /> Multi-Day</button>
                     </div>
 
                     {allDayBookings.length > 0 && (
                       <div>
-                        <p className="text-[10px] font-bold text-gray-500 mb-1.5">Room bookings on {fmtDateShort(selectedDate)}:</p>
+                        <p className="text-[11px] font-bold text-gray-500 mb-2">Room bookings on {fmtDateShort(selectedDate)}:</p>
                         <TimelineBar bookings={allDayBookings} pickedWindow={visualPickedWindow} />
-                        <div className="flex justify-between text-[9px] text-gray-400 mt-0.5 px-0.5 font-medium">
+                        <div className="flex justify-between text-[10px] text-gray-400 mt-1 px-0.5 font-medium">
                           <span>7 AM</span><span className="hidden sm:inline">10 AM</span><span>12 PM</span><span className="hidden sm:inline">3 PM</span><span>5 PM</span><span>8 PM</span>
                         </div>
                       </div>
@@ -842,17 +904,17 @@ export default function NewRequest() {
 
                     <div className="flex gap-4">
                       <div className="flex-1">
-                        <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Pickup Time</label>
-                        <div className="relative">
-                          <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                          <input type="time" min="07:00" max="19:50" value={pickupTime} onChange={e => { setPickupTime(e.target.value); setDuration(null); }} className="w-full bg-slate-50 border border-black/10 focus:border-primary rounded-xl pl-9 pr-3 py-3 text-sm font-black text-gray-800 outline-none transition-colors" />
-                        </div>
+                        <label className="block text-[11px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Pickup Time</label>
+                        <CustomTimePicker 
+                          value={pickupTime} 
+                          onChange={(val) => { setPickupTime(val); setDuration(null); }} 
+                        />
                       </div>
                     </div>
 
                     {pickupTime && bookingMode === 'sameday' && (
                       <div>
-                        <p className="text-[10px] font-bold text-gray-600 mb-2 uppercase tracking-wide">Duration</p>
+                        <p className="text-[11px] font-bold text-gray-600 mb-2 uppercase tracking-wide">Duration</p>
                         <div className="flex flex-wrap gap-2">
                           {DURATION_OPTIONS.map(opt => {
                             const tmpEnd = new Date(new Date(toISO(selectedDate, pickupTime)).getTime() + opt.mins * 60000);
@@ -871,36 +933,36 @@ export default function NewRequest() {
                     )}
 
                     {pickupTime && bookingMode === 'multiday' && (
-                      <div className="grid grid-cols-2 gap-4 border-t border-black/5 pt-4 mt-2">
+                      <div className="grid grid-cols-2 gap-4 border-t border-black/5 pt-5 mt-3">
                         <div>
-                          <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Return Date</label>
-                          <input type="date" min={minMultiDate} value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-slate-50 border border-black/10 focus:border-primary rounded-xl px-3 py-3 text-sm font-black text-gray-800 outline-none transition-colors" />
+                          <label className="block text-[11px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Return Date</label>
+                          <input type="date" min={minMultiDate} value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-slate-50 border border-black/10 focus-within:ring-2 focus-within:ring-primary/20 focus:border-primary rounded-xl px-3 py-3 text-sm font-black text-gray-800 outline-none transition-all" />
                         </div>
                         <div>
-                          <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Return Time</label>
-                          <div className="relative">
-                            <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                            <input type="time" min="07:00" max="19:50" value={returnTime} onChange={e => setReturnTime(e.target.value)} className="w-full bg-slate-50 border border-black/10 focus:border-primary rounded-xl pl-9 pr-3 py-3 text-sm font-black text-gray-800 outline-none transition-colors" />
-                          </div>
+                          <label className="block text-[11px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Return Time</label>
+                          <CustomTimePicker 
+                            value={returnTime} 
+                            onChange={(val) => setReturnTime(val)} 
+                          />
                         </div>
                       </div>
                     )}
 
                     {pickedWindowTs && (
-                      <div className={`text-xs font-bold px-4 py-3 rounded-xl flex flex-col gap-2 transition-all leading-relaxed ${currentSlotOk ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
+                      <div className={`text-xs font-bold px-4 py-3.5 rounded-xl flex flex-col gap-2 transition-all leading-relaxed ${currentSlotOk ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
                         <div className="flex items-start gap-2.5">
                           {currentSlotOk ? <><Check size={16} className="shrink-0 mt-0.5" /><span>Timeframe valid. Confirm below to proceed.</span></>
                            : <><AlertTriangle size={16} className="shrink-0 mt-0.5" /><span>{slotError}</span></>}
                         </div>
 
                         {!currentSlotOk && slotError?.includes('Cart conflict') && (
-                          <button onClick={() => setCart([])} className="mt-1 w-full py-2.5 bg-red-100 hover:bg-red-200 text-red-700 font-black rounded-lg transition-colors border border-red-200 text-[10px] uppercase tracking-wider shadow-sm">
+                          <button onClick={() => setCart([])} className="mt-1 w-full py-2.5 bg-red-100 hover:bg-red-200 text-red-700 font-black rounded-lg transition-colors border border-red-200 text-[11px] uppercase tracking-wider shadow-sm">
                             Clear Cart to Resolve Conflict
                           </button>
                         )}
 
                         {currentSlotOk && (
-                          <button onClick={() => setIsTimeframeConfirmed(true)} className="mt-1 w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-xl transition-colors shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2">
+                          <button onClick={() => setIsTimeframeConfirmed(true)} className="mt-2 w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-xl transition-colors shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2">
                             <CheckCircle2 size={16} /> Confirm Timeframe
                           </button>
                         )}
@@ -911,8 +973,8 @@ export default function NewRequest() {
 
                 {step2Done && (
                   <div className="px-4 pb-3">
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-2 shadow-sm">
-                      <CheckCircle size={14} className="text-emerald-600 flex-shrink-0" />
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5 flex items-center gap-2 shadow-sm">
+                      <CheckCircle size={16} className="text-emerald-600 flex-shrink-0" />
                       <span className="text-xs font-bold text-emerald-700">Timeframe locked in. Browse equipment below.</span>
                     </div>
                   </div>
@@ -924,7 +986,7 @@ export default function NewRequest() {
               <div className="border-b border-black/5">
                 <div className="px-4 py-3 flex items-center gap-2.5">
                   <StepBadge step="3" complete={step3Done} locked={!step2Done} />
-                  <Layers size={13} className={step3Done ? 'text-emerald-600' : step2Done ? 'text-gray-500' : 'text-gray-300'} />
+                  <Layers size={14} className={step3Done ? 'text-emerald-600' : step2Done ? 'text-gray-500' : 'text-gray-300'} />
                   <span className={`text-xs font-black uppercase tracking-wider ${step3Done ? 'text-emerald-700' : step2Done ? 'text-gray-700' : 'text-gray-400'}`}>
                     Equipment{step3Done ? ` · ${cartTotalItems} item${cartTotalItems > 1 ? 's' : ''} added` : ''}
                   </span>
@@ -940,16 +1002,16 @@ export default function NewRequest() {
                   </div>
                 ) : (
                   <div className="px-4 pb-4 space-y-3">
-                    <div className="relative bg-white border border-black/10 rounded-xl flex items-center px-3 py-2.5 shadow-sm focus-within:border-primary/40 transition-colors">
-                      <Search size={15} className="text-gray-400 flex-shrink-0" />
+                    <div className="relative bg-white border border-black/10 rounded-xl flex items-center px-3 py-3 shadow-sm focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/20 transition-colors">
+                      <Search size={16} className="text-gray-400 flex-shrink-0" />
                       <input type="search" placeholder="Search by name or barcode…" value={inventorySearch} onChange={e => setInventorySearch(e.target.value)} className="flex-1 min-w-0 bg-transparent border-none px-3 py-0 text-sm font-medium text-gray-900 outline-none placeholder:text-gray-400" />
-                      {inventorySearch && <button onClick={() => setInventorySearch('')} className="p-1.5 bg-gray-100 rounded-full text-gray-500 hover:text-gray-900 flex-shrink-0"><X size={12} /></button>}
+                      {inventorySearch && <button onClick={() => setInventorySearch('')} className="p-1.5 bg-gray-100 rounded-full text-gray-500 hover:text-gray-900 flex-shrink-0"><X size={14} /></button>}
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[10px] text-gray-400 px-0.5 font-medium">
-                      <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-red-400/75 inline-block" />Booked</span>
-                      <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-teal-400/75 inline-block" />Your slot</span>
-                      <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-gray-200 inline-block" />Free</span>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] text-gray-400 px-0.5 font-medium">
+                      <span className="flex items-center gap-1.5"><span className="w-3 h-2.5 rounded-sm bg-red-400/75 inline-block" />Booked</span>
+                      <span className="flex items-center gap-1.5"><span className="w-3 h-2.5 rounded-sm bg-teal-400/75 inline-block" />Your slot</span>
+                      <span className="flex items-center gap-1.5"><span className="w-3 h-2.5 rounded-sm bg-gray-200 inline-block" />Free</span>
                     </div>
 
                     {loadingInv ? (
@@ -981,8 +1043,8 @@ export default function NewRequest() {
           {/* ⚡ FLOATING ACTION BAR FOR CART */}
           {selectedDate && !calendarOpen && (
             <>
-              <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-black/10 px-4 py-3 z-[60] shadow-[0_-10px_30px_rgba(0,0,0,0.08)] pb-safe">
-                <div className="flex items-center justify-between gap-3 max-w-4xl mx-auto">
+              <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-black/10 px-4 py-4 z-[60] shadow-[0_-10px_30px_rgba(0,0,0,0.08)]">
+                <div className="flex items-center justify-between gap-3 max-w-4xl mx-auto mb-2 md:mb-0">
                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { if(cartTotalItems > 0 && step2Done) setIsCartOpen(true); }}>
                       {cartTotalItems > 0 ? (
                         <div className="flex items-center gap-3">
@@ -992,7 +1054,7 @@ export default function NewRequest() {
                            </div>
                            <div className="min-w-0">
                               <p className="text-sm font-black text-gray-900 truncate">{cartTotalItems} item{cartTotalItems > 1 ? 's' : ''} added</p>
-                              <p className="text-[10px] text-gray-500 font-medium truncate mt-0.5">{step2Done ? 'Tap to view cart & confirm' : '⚠ Confirm timeframe to proceed'}</p>
+                              <p className="text-[11px] text-gray-500 font-medium truncate mt-0.5">{step2Done ? 'Tap to view cart & confirm' : '⚠ Confirm timeframe to proceed'}</p>
                            </div>
                         </div>
                       ) : (
@@ -1000,14 +1062,14 @@ export default function NewRequest() {
                            <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center text-gray-400"><ShoppingBag size={20} /></div>
                            <div>
                               <p className="text-sm font-bold text-gray-400">Cart is empty</p>
-                              <p className="text-[10px] text-gray-400 mt-0.5">Select items to continue</p>
+                              <p className="text-[11px] text-gray-400 mt-0.5">Select items to continue</p>
                            </div>
                         </div>
                       )}
                    </div>
                    
                    <button disabled={cartTotalItems === 0 || !step2Done} onClick={() => setIsCartOpen(true)} className="px-6 py-3.5 bg-gray-900 text-white font-black text-sm rounded-xl shadow-lg shadow-gray-900/30 disabled:opacity-40 disabled:shadow-none hover:bg-black transition-all active:scale-95 flex items-center gap-2">
-                     Review <ChevronUp size={16} className="opacity-70" />
+                      Review <ChevronUp size={16} className="opacity-70" />
                    </button>
                 </div>
               </div>
@@ -1022,31 +1084,31 @@ export default function NewRequest() {
                           <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary"><ShoppingBag size={18} /></div>
                           <div>
                             <h2 className="text-base font-black text-gray-900 leading-none">Your Cart</h2>
-                            <p className="text-[10px] font-bold text-gray-500 mt-1 uppercase tracking-wider">{cartTotalItems} item{cartTotalItems > 1 ? 's' : ''}</p>
+                            <p className="text-[11px] font-bold text-gray-500 mt-1 uppercase tracking-wider">{cartTotalItems} item{cartTotalItems > 1 ? 's' : ''}</p>
                           </div>
                         </div>
                         <button onClick={() => setIsCartOpen(false)} className="p-2.5 bg-gray-100 rounded-full text-gray-500 hover:text-red-500 hover:bg-red-50 transition-colors"><X size={18} /></button>
                      </div>
                      
-                     <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-6 bg-slate-50/50 pb-safe">
+                     <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-6 bg-slate-50/50 pb-8">
                         <div className="space-y-2.5">
                           {cart.map(item => <CartRow key={cartKeyOf(item)} item={item} onAdjust={adjustCartQty} onRemove={removeFromCart} />)}
                         </div>
 
                         <div className="space-y-2 bg-white p-5 rounded-2xl border border-black/5 shadow-sm">
-                          <label htmlFor="purpose-select" className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-2">Purpose <span className="text-red-400">*</span></label>
-                          <select id="purpose-select" className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors" value={purpose} onChange={e => setPurpose(e.target.value)}>
+                          <label htmlFor="purpose-select" className="block text-[11px] font-black text-gray-500 uppercase tracking-wider mb-2">Purpose <span className="text-red-400">*</span></label>
+                          <select id="purpose-select" className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all appearance-none" value={purpose} onChange={e => setPurpose(e.target.value)}>
                             <option value="" disabled>Select purpose…</option>
                             {PURPOSES.map(p => <option key={p} value={p}>{p}</option>)}
                           </select>
-                          {purpose === 'Other' && <input type="text" placeholder="Briefly describe your purpose…" className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors mt-3" value={customPurpose} onChange={e => setCustomPurpose(e.target.value)} maxLength={120} />}
+                          {purpose === 'Other' && <input type="text" placeholder="Briefly describe your purpose…" className="w-full bg-slate-50 border border-black/10 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all mt-3" value={customPurpose} onChange={e => setCustomPurpose(e.target.value)} maxLength={120} />}
                         </div>
 
                         <div className="space-y-2 bg-white p-5 rounded-2xl border border-black/5 shadow-sm">
-                          <label htmlFor="notif-email" className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-2">Notification email <span className="text-red-400">*</span></label>
+                          <label htmlFor="notif-email" className="block text-[11px] font-black text-gray-500 uppercase tracking-wider mb-2">Notification email <span className="text-red-400">*</span></label>
                           <div className="relative">
                             <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                            <input id="notif-email" type="email" placeholder="your@email.com" autoComplete="email" className="w-full bg-slate-50 border border-black/10 rounded-xl pl-10 pr-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:border-primary transition-colors" value={email} onChange={e => setEmail(e.target.value)} />
+                            <input id="notif-email" type="email" placeholder="your@email.com" autoComplete="email" className="w-full bg-slate-50 border border-black/10 rounded-xl pl-10 pr-4 py-3.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" value={email} onChange={e => setEmail(e.target.value)} />
                           </div>
                         </div>
 
@@ -1094,7 +1156,7 @@ export default function NewRequest() {
                     <QRCodeSVG value={String(successData.qr_code)} size={180} level="M" />
                   </div>
                   <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl mb-5">
-                    <p className="font-black text-amber-900 text-[10px] flex items-center justify-center gap-1.5 mb-1"><Camera size={14} className="animate-pulse" /> SCREENSHOT THIS QR CODE</p>
+                    <p className="font-black text-amber-900 text-[11px] flex items-center justify-center gap-1.5 mb-1"><Camera size={14} className="animate-pulse" /> SCREENSHOT THIS QR CODE</p>
                     <p className="text-[11px] text-amber-800 font-medium">Show this QR code at the counter during your pickup window. You won't be able to retrieve it after closing this screen.</p>
                   </div>
                   <button className="w-full py-4 bg-gray-900 hover:bg-black text-white text-sm rounded-2xl font-black transition-all" onClick={() => setConfirmClose(true)}>I've saved my QR code</button>

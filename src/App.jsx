@@ -151,7 +151,12 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <AppContent />
-        <Toaster position="top-right" />
+        <Toaster 
+          position="top-right" 
+          containerStyle={{
+            zIndex: 99999, // 🔥 Forces toasts above modals (z-[100])
+          }}
+        />
       </AuthProvider>
     </BrowserRouter>
   );

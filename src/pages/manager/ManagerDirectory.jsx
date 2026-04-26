@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
-import { Upload, Trash2, Users, GraduationCap, Loader2, Search, Plus } from 'lucide-react';
+import { Upload, Trash2, Users, GraduationCap, Loader2, Search, Plus, AlertTriangle } from 'lucide-react';
 import api from '../../api/axiosClient';
 import NeumorphCard from '../../components/ui/NeumorphCard';
 import NeumorphButton from '../../components/ui/NeumorphButton';
@@ -15,11 +15,15 @@ export default function ManagerDirectory() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   
-  // NEW: Search and Modal states
+  // Search and Add Modal states
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [addingSingle, setAddingSingle] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', identifier: '' });
+
+  // NEW: Reset PIN Modal states
+  const [resetModalData, setResetModalData] = useState(null); // { id, name }
+  const [resettingPin, setResettingPin] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -45,7 +49,7 @@ export default function ManagerDirectory() {
     loadData();
   }, [loadData]);
 
-  // NEW: Filter Data based on Search Query
+  // Filter Data based on Search Query
   const filteredData = data.filter(item => {
     const query = searchQuery.toLowerCase();
     if (activeTab === 'students') {
@@ -94,7 +98,7 @@ export default function ManagerDirectory() {
     });
   };
 
-  // NEW: Handle Manual Single Add (Reuses the bulk endpoint!)
+  // Handle Manual Single Add
   const handleSingleAdd = async (e) => {
     e.preventDefault();
     if (!addForm.name.trim() || !addForm.identifier.trim()) {
@@ -117,6 +121,26 @@ export default function ManagerDirectory() {
       toast.error(err.response?.data?.message || 'Failed to add user');
     } finally {
       setAddingSingle(false);
+    }
+  };
+
+  // NEW: Handle PIN Reset 
+  const handleResetPinClick = (id, name) => {
+    setResetModalData({ id, name });
+  };
+
+  const confirmResetPin = async () => {
+    if (!resetModalData) return;
+    setResettingPin(true);
+    try {
+      // Endpoint assumes a PUT or POST request to reset the PIN to default '1234'
+      await api.put(`/manager/students/${resetModalData.id}/reset-pin`);
+      toast.success(`PIN for ${resetModalData.name} has been reset to 1234.`);
+      setResetModalData(null);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to reset PIN.');
+    } finally {
+      setResettingPin(false);
     }
   };
 
@@ -225,35 +249,40 @@ export default function ManagerDirectory() {
                   </th>
                   <th className="px-6 py-4">{activeTab === 'students' ? 'Full Name' : 'Name'}</th>
                   <th className="px-6 py-4">{activeTab === 'students' ? 'Student ID' : 'Email Address'}</th>
+                  
+                  {/* Action Header */}
+                  {activeTab === 'students' && (
+                    <th className="px-6 py-4 text-right">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/5">
                 {filteredData.length === 0 ? (
-                  <tr><td colSpan="3" className="px-6 py-8 text-center text-muted">No records found.</td></tr>
+                  <tr><td colSpan={activeTab === 'students' ? "4" : "3"} className="px-6 py-8 text-center text-muted">No records found.</td></tr>
                 ) : (
                   filteredData.map((row) => (
-  <tr key={row.id} className="hover:bg-black/[0.01] transition-colors">
-    <td className="px-6 py-4">
-      <input type="checkbox" checked={selectedIds.includes(row.id)} onChange={() => toggleSelect(row.id)} className="rounded border-gray-300"/>
-    </td>
-    <td className="px-6 py-4 font-bold text-gray-800">{activeTab === 'students' ? row.full_name : row.name}</td>
-    <td className="px-6 py-4 text-gray-600 font-mono text-xs">{activeTab === 'students' ? row.student_id : row.email}</td>
-    
-    {/* NEW: Action column for resetting PIN */}
-    <td className="px-6 py-4 text-right">
-       {activeTab === 'students' && (
-         <NeumorphButton 
-           variant="outline" 
-           size="sm" 
-           className="text-amber-600 border-amber-200 hover:bg-amber-50 text-[10px]"
-           onClick={() => handleResetPin(row.id, row.full_name)}
-         >
-           Reset PIN to 1234
-         </NeumorphButton>
-       )}
-    </td>
-  </tr>
-))
+                    <tr key={row.id} className="hover:bg-black/[0.01] transition-colors">
+                      <td className="px-6 py-4">
+                        <input type="checkbox" checked={selectedIds.includes(row.id)} onChange={() => toggleSelect(row.id)} className="rounded border-gray-300"/>
+                      </td>
+                      <td className="px-6 py-4 font-bold text-gray-800">{activeTab === 'students' ? row.full_name : row.name}</td>
+                      <td className="px-6 py-4 text-gray-600 font-mono text-xs">{activeTab === 'students' ? row.student_id : row.email}</td>
+                      
+                      {/* Action column for resetting PIN */}
+                      {activeTab === 'students' && (
+                        <td className="px-6 py-4 text-right">
+                            <NeumorphButton 
+                              variant="outline" 
+                              size="sm" 
+                              className="text-amber-600 border-amber-200 hover:bg-amber-50 text-[10px] py-1.5"
+                              onClick={() => handleResetPinClick(row.id, row.full_name)}
+                            >
+                              Reset PIN
+                            </NeumorphButton>
+                        </td>
+                      )}
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -287,6 +316,44 @@ export default function ManagerDirectory() {
           </div>
         </form>
       </NeumorphModal>
+
+      {/* NEW: Confirm PIN Reset Modal */}
+      <NeumorphModal 
+        open={!!resetModalData} 
+        onClose={() => setResetModalData(null)} 
+        title="Confirm PIN Reset" 
+        size="sm"
+      >
+        <div className="text-center pb-2">
+          <div className="w-16 h-16 bg-amber-50 border border-amber-200 text-amber-500 rounded-full flex items-center justify-center mx-auto shadow-inner mb-4">
+            <AlertTriangle size={28} />
+          </div>
+          <h3 className="text-lg font-black text-gray-800">Reset Student PIN?</h3>
+          <p className="text-sm font-medium text-gray-500 mt-2 max-w-[280px] mx-auto leading-relaxed">
+            You are about to reset the PIN for <strong className="text-gray-800">{resetModalData?.name}</strong> back to the default <span className="font-mono bg-gray-100 text-gray-800 px-1 py-0.5 rounded">1234</span>.
+          </p>
+          
+          <div className="flex gap-3 pt-6 border-t border-black/5 mt-6">
+            <NeumorphButton 
+              variant="outline" 
+              className="flex-1 py-3 font-bold" 
+              onClick={() => setResetModalData(null)} 
+              disabled={resettingPin}
+            >
+              Cancel
+            </NeumorphButton>
+            <NeumorphButton 
+              variant="primary" 
+              className="flex-1 py-3 font-bold shadow-md shadow-primary/20 bg-amber-500 hover:bg-amber-600 border-none text-white" 
+              onClick={confirmResetPin} 
+              loading={resettingPin}
+            >
+              Yes, Reset PIN
+            </NeumorphButton>
+          </div>
+        </div>
+      </NeumorphModal>
+
     </div>
   );
 }

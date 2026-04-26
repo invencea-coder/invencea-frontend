@@ -1,15 +1,27 @@
 // src/pages/faculty/MyRequest.jsx
-import React, { useState, useEffect, useMemo } from 'react';
-import { Package, Clock, CheckCircle2, FileText, ChevronRight, Loader2, X, XCircle } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Package, Clock, CheckCircle2, FileText, ChevronRight, Loader2, X, XCircle, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useAuth } from '../../hooks/useAuth.js';
+
+// ⚡ FIX: Corrected import path for useAuth
+import { useAuth } from '../../context/AuthContext.jsx'; 
 import { listRequests } from '../../api/requestAPI.js';
 import api from '../../api/axiosClient.js';
 import { fmtDateTime } from '../../utils/date.js';
 import { QRCodeSVG } from 'qrcode.react';
 
-const StatusBadge = ({ status }) => {
+const StatusBadge = ({ status, isOverdue }) => {
   const s = status?.toUpperCase() || 'UNKNOWN';
+  
+  // ⚡ ENHANCEMENT: Noticeable Overdue badge
+  if (isOverdue) {
+    return (
+      <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border bg-red-100 text-red-700 border-red-200">
+        <AlertTriangle size={10} /> OVERDUE
+      </span>
+    );
+  }
+
   const colors = {
     'PENDING':            'bg-amber-50 text-amber-800 border-amber-200',
     'PENDING APPROVAL':   'bg-amber-50 text-amber-800 border-amber-200',
@@ -25,6 +37,13 @@ const StatusBadge = ({ status }) => {
   };
   const colorClass = colors[s] || 'bg-gray-100 text-gray-800 border-gray-200';
   return <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${colorClass}`}>{s}</span>;
+};
+
+// ⚡ Helper to check if a request is overdue
+const checkIsOverdue = (req) => {
+  if (!['ISSUED', 'PARTIALLY RETURNED'].includes(req.status?.toUpperCase())) return false;
+  if (!req.return_deadline) return false;
+  return new Date() > new Date(req.return_deadline);
 };
 
 export default function MyRequest() {
@@ -111,105 +130,148 @@ export default function MyRequest() {
             </div>
           ) : (
             <div className="divide-y divide-black/5">
-              {displayedRequests.map(req => (
-                <div key={req.id} onClick={() => setSelectedRequest(req)} className="p-5 hover:bg-white/60 transition-colors cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="flex items-start gap-4">
-                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner flex-shrink-0 bg-white border border-black/5 text-gray-500 group-hover:scale-105 group-hover:text-primary transition-all">
-                      {req.status === 'RETURNED' ? <CheckCircle2 size={24} className="text-emerald-500" /> : <Package size={24} />}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="font-mono text-[10px] font-black text-gray-400 uppercase tracking-widest">#{req.id}</span>
-                        <StatusBadge status={req.status} />
+              {displayedRequests.map(req => {
+                const isOverdue = checkIsOverdue(req);
+                const isIssued = ['ISSUED', 'PARTIALLY RETURNED'].includes(req.status?.toUpperCase());
+
+                return (
+                  <div key={req.id} onClick={() => setSelectedRequest(req)} className="p-5 hover:bg-white/60 transition-colors cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                      <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner flex-shrink-0 border transition-all ${isOverdue ? 'bg-red-50 text-red-500 border-red-100 group-hover:scale-105' : 'bg-white border-black/5 text-gray-500 group-hover:scale-105 group-hover:text-primary'}`}>
+                        {req.status === 'RETURNED' ? <CheckCircle2 size={24} className="text-emerald-500" /> : isOverdue ? <AlertTriangle size={24} /> : <Package size={24} />}
                       </div>
-                      <p className="font-black text-gray-800 text-lg group-hover:text-primary transition-colors">{req.purpose || 'General Request'}</p>
-                      <p className="text-xs font-medium text-gray-500 mt-1 flex items-center gap-1.5"><Clock size={12} className="text-gray-400" /> {fmtDateTime(req.requested_time || req.created_at)}</p>
+                      <div>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="font-mono text-[10px] font-black text-gray-400 uppercase tracking-widest">#{req.id}</span>
+                          <StatusBadge status={req.status} isOverdue={isOverdue} />
+                        </div>
+                        <p className={`font-black text-lg transition-colors ${isOverdue ? 'text-red-900 group-hover:text-red-700' : 'text-gray-800 group-hover:text-primary'}`}>
+                          {req.purpose || 'General Request'}
+                        </p>
+                        
+                        {/* ⚡ ENHANCEMENT: Show Return Deadline if issued, otherwise show requested time */}
+                        {isIssued && req.return_deadline ? (
+                          <p className={`text-xs font-medium mt-1 flex items-center gap-1.5 ${isOverdue ? 'text-red-600' : 'text-purple-600'}`}>
+                            <Clock size={12} /> Expected Return: {fmtDateTime(req.return_deadline)}
+                          </p>
+                        ) : (
+                          <p className="text-xs font-medium text-gray-500 mt-1 flex items-center gap-1.5">
+                            <Clock size={12} className="text-gray-400" /> Requested: {fmtDateTime(req.requested_time || req.created_at)}
+                          </p>
+                        )}
+
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto mt-2 md:mt-0 pl-18 md:pl-0">
+                      <div className="text-left md:text-right">
+                        <p className="text-[10px] text-gray-400 uppercase tracking-widest font-black mb-0.5">Items</p>
+                        <p className={`text-sm font-black px-3 py-1 rounded-lg ${isOverdue ? 'bg-red-100 text-red-700' : 'bg-primary/10 text-primary'}`}>
+                          {req.items?.length || 0} borrowed
+                        </p>
+                      </div>
+                      <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center group-hover:bg-primary/10 border border-black/5 transition-colors">
+                        <ChevronRight size={20} className="text-gray-400 group-hover:text-primary transition-colors" />
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto mt-2 md:mt-0 pl-18 md:pl-0">
-                    <div className="text-left md:text-right">
-                      <p className="text-[10px] text-gray-400 uppercase tracking-widest font-black mb-0.5">Items</p>
-                      <p className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-lg">{req.items?.length || 0} borrowed</p>
-                    </div>
-                    <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center group-hover:bg-primary/10 border border-black/5 transition-colors">
-                      <ChevronRight size={20} className="text-gray-400 group-hover:text-primary transition-colors" />
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
 
-        {selectedRequest && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-white/90 backdrop-blur-2xl w-full max-w-lg relative overflow-hidden rounded-3xl border border-white/50 shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
-              <div className="bg-white/50 p-6 border-b border-black/5 flex justify-between items-center flex-shrink-0">
-                <div>
-                  <h3 className="font-black text-gray-800 text-xl tracking-tight">#{selectedRequest.id}</h3>
-                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-0.5">{selectedRequest.purpose || 'General Request'}</p>
-                </div>
-                <button onClick={() => setSelectedRequest(null)} className="p-2 bg-white rounded-full text-gray-400 hover:text-red-500 shadow-sm border border-black/5 transition-all hover:scale-110"><X size={18} /></button>
-              </div>
+        {selectedRequest && (() => {
+          const isOverdue = checkIsOverdue(selectedRequest);
+          const isIssued = ['ISSUED', 'PARTIALLY RETURNED'].includes(selectedRequest.status?.toUpperCase());
 
-              <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
-                <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-black/5 shadow-sm">
-                  <span className="text-gray-500 font-black text-[10px] uppercase tracking-widest flex items-center gap-2"><Clock size={14}/> Status</span>
-                  <StatusBadge status={selectedRequest.status} />
-                </div>
-
-                <div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5"><Package size={14} /> Requested Items</p>
-                  <div className="space-y-2">
-                    {selectedRequest.items?.map((item, idx) => {
-                      const isReturned = item.status === 'RETURNED' || item.item_status === 'RETURNED';
-                      const displayAssignee = (item.assigned_to === 'Shared Group' || item.assigned_to === 'Shared') ? 'Requester' : item.assigned_to;
-
-                      return (
-                        <div key={idx} className={`flex justify-between items-center p-3 rounded-2xl border transition-colors ${isReturned ? 'bg-emerald-50/50 border-emerald-100' : 'bg-white border-black/5 shadow-sm'}`}>
-                          <div className="flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-inner flex-shrink-0 ${isReturned ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-50 text-gray-400'}`}>
-                              {isReturned ? <CheckCircle2 size={18} /> : <Package size={18} />}
-                            </div>
-                            <div className="min-w-0 pr-2">
-                              <span className={`font-black text-sm truncate block ${isReturned ? 'text-emerald-900 line-through opacity-60' : 'text-gray-800'}`}>{item.item_name}</span>
-                              {displayAssignee && displayAssignee !== 'Requester' && <p className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">Assigned: {displayAssignee}</p>}
-                            </div>
-                          </div>
-                          <span className={`px-2.5 py-1 rounded-lg text-xs font-black border flex-shrink-0 ${isReturned ? 'bg-emerald-100 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-black/5 text-gray-600'}`}>×{item.quantity || item.qty_requested || 1}</span>
-                        </div>
-                      );
-                    })}
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+              <div className="bg-white/90 backdrop-blur-2xl w-full max-w-lg relative overflow-hidden rounded-3xl border border-white/50 shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
+                <div className="bg-white/50 p-6 border-b border-black/5 flex justify-between items-center flex-shrink-0">
+                  <div>
+                    <h3 className="font-black text-gray-800 text-xl tracking-tight flex items-center gap-2">
+                      #{selectedRequest.id}
+                    </h3>
+                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-0.5">{selectedRequest.purpose || 'General Request'}</p>
                   </div>
+                  <button onClick={() => setSelectedRequest(null)} className="p-2 bg-white rounded-full text-gray-400 hover:text-red-500 shadow-sm border border-black/5 transition-all hover:scale-110"><X size={18} /></button>
                 </div>
 
-                {['PENDING', 'APPROVED'].includes(selectedRequest.status?.toUpperCase()) && selectedRequest.qr_code && (
-                  <div className="mt-6 flex flex-col items-center justify-center p-6 border-2 border-dashed border-black/10 rounded-3xl bg-white/50 relative overflow-hidden group">
-                    <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 relative z-10">Your Request QR Code</p>
-                    <div className="p-3 bg-white rounded-2xl shadow-sm border border-black/5 relative z-10 group-hover:scale-105 transition-transform duration-300">
-                      <QRCodeSVG value={selectedRequest.qr_code} size={160} level="M" />
+                <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+                  
+                  {/* Status Block */}
+                  <div className={`flex justify-between items-center p-4 rounded-2xl border shadow-sm ${isOverdue ? 'bg-red-50 border-red-100' : 'bg-white border-black/5'}`}>
+                    <span className={`font-black text-[10px] uppercase tracking-widest flex items-center gap-2 ${isOverdue ? 'text-red-500' : 'text-gray-500'}`}>
+                      <Clock size={14}/> Status
+                    </span>
+                    <StatusBadge status={selectedRequest.status} isOverdue={isOverdue} />
+                  </div>
+
+                  {/* Deadline Notice if Issued */}
+                  {isIssued && selectedRequest.return_deadline && (
+                    <div className={`p-4 rounded-2xl border ${isOverdue ? 'bg-red-100 border-red-200 text-red-800' : 'bg-purple-50 border-purple-100 text-purple-800'}`}>
+                      <p className="text-[10px] font-black uppercase tracking-widest mb-1 opacity-70 flex items-center gap-1.5">
+                        {isOverdue ? <AlertTriangle size={12}/> : <Clock size={12}/>} Expected Return
+                      </p>
+                      <p className="font-bold text-sm">{fmtDateTime(selectedRequest.return_deadline)}</p>
                     </div>
-                    <p className="text-[11px] font-medium text-gray-500 mt-4 text-center relative z-10 max-w-[200px] leading-relaxed">Present this QR code at the counter to claim your items.</p>
+                  )}
+
+                  {/* Items List */}
+                  <div>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5"><Package size={14} /> Requested Items</p>
+                    <div className="space-y-2">
+                      {selectedRequest.items?.map((item, idx) => {
+                        const isReturned = item.status === 'RETURNED' || item.item_status === 'RETURNED';
+                        const displayAssignee = (item.assigned_to === 'Shared Group' || item.assigned_to === 'Shared') ? 'Requester' : item.assigned_to;
+
+                        return (
+                          <div key={idx} className={`flex justify-between items-center p-3 rounded-2xl border transition-colors ${isReturned ? 'bg-emerald-50/50 border-emerald-100' : 'bg-white border-black/5 shadow-sm'}`}>
+                            <div className="flex items-center gap-3">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-inner flex-shrink-0 ${isReturned ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-50 text-gray-400'}`}>
+                                {isReturned ? <CheckCircle2 size={18} /> : <Package size={18} />}
+                              </div>
+                              <div className="min-w-0 pr-2">
+                                <span className={`font-black text-sm truncate block ${isReturned ? 'text-emerald-900 line-through opacity-60' : 'text-gray-800'}`}>{item.item_name}</span>
+                                {displayAssignee && displayAssignee !== 'Requester' && <p className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">Assigned: {displayAssignee}</p>}
+                              </div>
+                            </div>
+                            <span className={`px-2.5 py-1 rounded-lg text-xs font-black border flex-shrink-0 ${isReturned ? 'bg-emerald-100 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-black/5 text-gray-600'}`}>×{item.quantity || item.qty_requested || 1}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                )}
-              </div>
 
-              <div className="p-4 border-t border-black/5 flex-shrink-0 bg-white/50 flex gap-3">
-                {['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(selectedRequest.status?.toUpperCase()) && (
-                  <button
-                    onClick={() => handleCancelRequest(selectedRequest.id)}
-                    disabled={cancelling}
-                    className="flex-1 py-4 rounded-2xl font-black tracking-wide transition-all border-2 border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {cancelling ? <Loader2 size={18} className="animate-spin" /> : <><XCircle size={18} /> Cancel</>}
-                  </button>
-                )}
-                <button onClick={() => setSelectedRequest(null)} className="flex-1 bg-primary hover:bg-primary/90 text-white py-4 rounded-2xl font-black tracking-wide shadow-md shadow-primary/20 transition-all">Close</button>
-              </div>
+                  {/* QR Code */}
+                  {['PENDING', 'APPROVED'].includes(selectedRequest.status?.toUpperCase()) && selectedRequest.qr_code && (
+                    <div className="mt-6 flex flex-col items-center justify-center p-6 border-2 border-dashed border-black/10 rounded-3xl bg-white/50 relative overflow-hidden group">
+                      <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 relative z-10">Your Request QR Code</p>
+                      <div className="p-3 bg-white rounded-2xl shadow-sm border border-black/5 relative z-10 group-hover:scale-105 transition-transform duration-300">
+                        <QRCodeSVG value={selectedRequest.qr_code} size={160} level="M" />
+                      </div>
+                      <p className="text-[11px] font-medium text-gray-500 mt-4 text-center relative z-10 max-w-[200px] leading-relaxed">Present this QR code at the counter to claim your items.</p>
+                    </div>
+                  )}
+                </div>
 
+                <div className="p-4 border-t border-black/5 flex-shrink-0 bg-white/50 flex gap-3">
+                  {['PENDING', 'PENDING APPROVAL', 'APPROVED'].includes(selectedRequest.status?.toUpperCase()) && (
+                    <button
+                      onClick={() => handleCancelRequest(selectedRequest.id)}
+                      disabled={cancelling}
+                      className="flex-1 py-4 rounded-2xl font-black tracking-wide transition-all border-2 border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {cancelling ? <Loader2 size={18} className="animate-spin" /> : <><XCircle size={18} /> Cancel</>}
+                    </button>
+                  )}
+                  <button onClick={() => setSelectedRequest(null)} className="flex-1 bg-primary hover:bg-primary/90 text-white py-4 rounded-2xl font-black tracking-wide shadow-md shadow-primary/20 transition-all">Close</button>
+                </div>
+
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

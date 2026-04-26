@@ -32,8 +32,13 @@ export default function AdminLogin() {
 
       await login(token, userData);
 
-      toast.success('Admin login successful');
-      navigate('/admin', { replace: true });
+      // Capitalize the role for the toast message (e.g., "Manager" or "Admin")
+      const roleName = userData.role.charAt(0).toUpperCase() + userData.role.slice(1);
+      toast.success(`${roleName} login successful`);
+      
+      // DYNAMIC ROUTING: Navigate based on the user's role 
+      // Admin goes to '/admin', Manager goes to '/manager'
+      navigate(`/${userData.role}`, { replace: true });
     } catch (e) {
       const msg = e.response?.data?.message || e.message || 'Invalid credentials';
       setErr(msg);
@@ -61,8 +66,8 @@ export default function AdminLogin() {
           </div>
           
           <div className="text-center mb-8 relative z-10">
-            <h2 className="font-display text-2xl font-black text-gray-900 tracking-tight">Admin Portal</h2>
-            <p className="text-sm font-medium text-gray-500 mt-1">Enter credentials to manage inventory.</p>
+            <h2 className="font-display text-2xl font-black text-gray-900 tracking-tight">System Portal</h2>
+            <p className="text-sm font-medium text-gray-500 mt-1">Admin & Manager Login.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4 relative z-10">
