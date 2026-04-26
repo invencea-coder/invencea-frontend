@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { sendOTP, verifyOTP } from '../../api/authAPI.js';
-import { useAuth } from '../../hooks/useAuth.js';
+import { useAuth } from '../../context/AuthContext.jsx'; // Assuming this is your AuthContext path based on previous fixes
 import NeumorphButton from '../../components/ui/NeumorphButton.jsx';
 
 const OTP_SECONDS = 120;
@@ -20,7 +20,7 @@ export default function OTPVerification() {
   const [resending, setResending] = useState(false);
   const inputs = useRef([]);
 
-  useEffect(() => { if (!email) navigate('/login/faculty'); }, [email]);
+  useEffect(() => { if (!email) navigate('/login/faculty'); }, [email, navigate]);
 
   useEffect(() => {
     if (timeLeft <= 0) return;
@@ -52,7 +52,8 @@ export default function OTPVerification() {
     }
   };
 
-  const handleVerify = async () => {
+  // Wrapped in useCallback so it works cleanly with the Enter key useEffect below
+  const handleVerify = useCallback(async () => {
     const code = digits.join('');
     if (code.length < 6) { toast.error('Enter all 6 digits'); return; }
     setLoading(true);
@@ -68,7 +69,7 @@ export default function OTPVerification() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [digits, email, login, navigate]);
 
   const handleResend = async () => {
     setResending(true);
@@ -84,9 +85,24 @@ export default function OTPVerification() {
     }
   };
 
+  const expired = timeLeft <= 0;
+
+  // 👇 MOVED HERE: Enter key listener must be BEFORE the return statement
+  useEffect(() => {
+    const handleKeyPress = (e) => {
+      // If Enter is pressed, loading is false, the OTP is not expired, and 6 digits are entered
+      if (e.key === 'Enter' && digits.join('').length === 6 && !loading && !expired) {
+        e.preventDefault();
+        handleVerify();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [digits, loading, expired, handleVerify]);
+
   const mins = String(Math.floor(timeLeft / 60)).padStart(2, '0');
   const secs = String(timeLeft % 60).padStart(2, '0');
-  const expired = timeLeft <= 0;
   const circumference = 2 * Math.PI * 28;
   const progress = (timeLeft / OTP_SECONDS) * circumference;
 
