@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
 import ManagerDirectory from './pages/manager/ManagerDirectory.jsx';
-
+import AuditLogs from './pages/manager/AuditLogs.jsx';
 // Layout
 import DashboardLayout from './components/layout/DashboardLayout.jsx';
 
@@ -92,6 +92,19 @@ const AppContent = () => {
       >
         <Route index element={<ManagerDashboard />} />
         <Route path="directory" element={<ManagerDirectory />} /> {/* ADD THIS LINE */}
+        <Route path="audits" element={<AuditLogs />} />
+      </Route>
+      {/* Dean routes (Reports Only) */}
+      <Route
+        path="/dean/*"
+        element={
+          <ProtectedRoute role="dean">
+            <DashboardLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Navigate to="reports" replace />} />
+        <Route path="reports" element={<Reports />} />
       </Route>
 
       {/* Admin routes */}

@@ -904,7 +904,15 @@ export default function NewRequest() {
 
                     <div className="flex gap-4">
                       <div className="flex-1">
-                        <label className="block text-[11px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Pickup Time</label>
+                        
+                        {/* ⚡ UPDATED: Pickup Time Label with Lunch Break Warning */}
+                        <label className="flex items-center flex-wrap gap-2 text-[11px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">
+                          Pickup Time
+                          <span className="text-amber-600 normal-case tracking-normal text-[9px] bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1 shadow-sm">
+                            <Clock size={10} /> Lunch Break: 11:30 AM - 1:00 PM
+                          </span>
+                        </label>
+                        
                         <CustomTimePicker 
                           value={pickupTime} 
                           onChange={(val) => { setPickupTime(val); setDuration(null); }} 
@@ -912,10 +920,13 @@ export default function NewRequest() {
                       </div>
                     </div>
 
+                    {/* ── SAME DAY UI ── */}
                     {pickupTime && bookingMode === 'sameday' && (
-                      <div>
-                        <p className="text-[11px] font-bold text-gray-600 mb-2 uppercase tracking-wide">Duration</p>
-                        <div className="flex flex-wrap gap-2">
+                      <div className="border-t border-black/5 pt-4 mt-3">
+                        <p className="text-[11px] font-bold text-gray-600 mb-2 uppercase tracking-wide">Return Duration</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          
+                          {/* Quick Selects */}
                           {DURATION_OPTIONS.map(opt => {
                             const tmpEnd = new Date(new Date(toISO(selectedDate, pickupTime)).getTime() + opt.mins * 60000);
                             const tHour = tmpEnd.getHours(); const tMin = tmpEnd.getMinutes();
@@ -928,23 +939,97 @@ export default function NewRequest() {
                               <button key={opt.mins} disabled={!valid} onClick={() => setDuration(sel ? null : opt.mins)} aria-pressed={sel} className={`px-4 py-2.5 rounded-xl border-2 text-xs font-black transition-all ${!valid ? 'border-gray-200 bg-gray-100 text-gray-400 line-through cursor-not-allowed' : sel ? 'border-primary bg-primary text-white shadow-sm' : 'border-black/10 bg-white text-gray-700 hover:border-primary/40'}`}>{opt.label}</button>
                             );
                           })}
+
+                          {/* ⚡ Clock-Style Custom Dropdown */}
+                          <div className={`flex items-center bg-white border-2 focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/20 rounded-xl pl-3 pr-2 py-1.5 transition-all ${(!DURATION_OPTIONS.some(o => o.mins === duration) && duration) ? 'border-primary shadow-sm' : 'border-black/10'}`}>
+                            <span className="text-[10px] font-black text-gray-400 uppercase mr-3">Custom</span>
+                            
+                            <select 
+                              value={Math.floor((duration || 0) / 60)} 
+                              onChange={(e) => {
+                                const h = parseInt(e.target.value, 10);
+                                const m = (duration || 0) % 60;
+                                const total = (h * 60) + m;
+                                setDuration(total === 0 ? null : total);
+                              }}
+                              className="bg-transparent text-sm font-black text-gray-800 outline-none cursor-pointer appearance-none text-center"
+                            >
+                              {Array.from({ length: 13 }, (_, i) => (
+                                <option key={`dh-${i}`} value={i}>{String(i).padStart(2, '0')}</option>
+                              ))}
+                            </select>
+                            <span className="text-[10px] text-gray-400 font-bold ml-0.5 uppercase">hr</span>
+
+                            <span className="text-gray-300 font-bold mx-1.5">:</span>
+
+                            <select 
+                              value={(duration || 0) % 60} 
+                              onChange={(e) => {
+                                const h = Math.floor((duration || 0) / 60);
+                                const m = parseInt(e.target.value, 10);
+                                const total = (h * 60) + m;
+                                setDuration(total === 0 ? null : total);
+                              }}
+                              className="bg-transparent text-sm font-black text-gray-800 outline-none cursor-pointer appearance-none text-center"
+                            >
+                              {Array.from({ length: 60 }, (_, i) => (
+                                <option key={`dm-${i}`} value={i}>{String(i).padStart(2, '0')}</option>
+                              ))}
+                            </select>
+                            <span className="text-[10px] text-gray-400 font-bold ml-0.5 pr-1 uppercase">min</span>
+                          </div>
+
                         </div>
                       </div>
                     )}
 
+                    {/* ── MULTI-DAY UI ── */}
                     {pickupTime && bookingMode === 'multiday' && (
-                      <div className="grid grid-cols-2 gap-4 border-t border-black/5 pt-5 mt-3">
+                      <div className="border-t border-black/5 pt-4 mt-3 space-y-4">
+                        
+                        {/* Quick Return Buttons */}
                         <div>
-                          <label className="block text-[11px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Return Date</label>
-                          <input type="date" min={minMultiDate} value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-slate-50 border border-black/10 focus-within:ring-2 focus-within:ring-primary/20 focus:border-primary rounded-xl px-3 py-3 text-sm font-black text-gray-800 outline-none transition-all" />
+                          <p className="text-[11px] font-bold text-gray-600 mb-2 uppercase tracking-wide">Quick Return Options</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {[ {label: 'Tomorrow', d: 1}, {label: '2 Days', d: 2}, {label: '3 Days', d: 3}, {label: '1 Week', d: 7} ].map(opt => {
+                              const [y, m, d] = selectedDate.split('-').map(Number);
+                              const futureDate = new Date(y, m - 1, d + opt.d);
+                              const futureStr = `${futureDate.getFullYear()}-${String(futureDate.getMonth() + 1).padStart(2, '0')}-${String(futureDate.getDate()).padStart(2, '0')}`;
+                              
+                              const sel = endDate === futureStr;
+                              return (
+                                <button 
+                                  key={opt.label} 
+                                  onClick={() => { 
+                                    setEndDate(futureStr); 
+                                    // Auto-fill time to match pickup time if empty
+                                    if (!returnTime) setReturnTime(pickupTime); 
+                                  }} 
+                                  className={`px-4 py-2.5 rounded-xl border-2 text-xs font-black transition-all ${sel ? 'border-primary bg-primary text-white shadow-sm' : 'border-black/10 bg-white text-gray-700 hover:border-primary/40'}`}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Return Time</label>
-                          <CustomTimePicker 
-                            value={returnTime} 
-                            onChange={(val) => setReturnTime(val)} 
-                          />
+
+                        {/* Custom Date/Time Pickers */}
+                        <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-2xl border border-black/5">
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Custom Return Date</label>
+                            <input type="date" min={minMultiDate} value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-white border border-black/10 focus-within:ring-2 focus-within:ring-primary/20 focus:border-primary rounded-xl px-3 py-2.5 text-sm font-black text-gray-800 outline-none transition-all cursor-pointer" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Custom Return Time</label>
+                            {/* Uses your existing clock-style CustomTimePicker component! */}
+                            <CustomTimePicker 
+                              value={returnTime} 
+                              onChange={(val) => setReturnTime(val)} 
+                            />
+                          </div>
                         </div>
+
                       </div>
                     )}
 

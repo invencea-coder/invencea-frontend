@@ -23,18 +23,17 @@ const StatCard = ({ icon: Icon, label, value, color }) => (
 
 export default function ManagerDashboard() {
   const { user } = useAuth();
-  const [stats, setStats] = useState({ admins: 0, faculty: 0, rooms: 0 });
+  const [stats, setStats] = useState({ admins: 0, deans: 0, rooms: 0 });
   const [systemUsers, setSystemUsers] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Modal State - Added 'password' to the initial state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    role: 'faculty',
+    role: 'admin', // ⚡ Default to admin
     room_id: '',
     password: '' 
   });
@@ -53,29 +52,26 @@ export default function ManagerDashboard() {
         const fetchedRooms = roomsRes.data?.data || roomsRes.data?.rooms || roomsRes.data || [];
         setRooms(Array.isArray(fetchedRooms) ? fetchedRooms : []);
       } catch (roomErr) {
-        console.error('Failed to fetch rooms for dropdown:', roomErr);
         toast.error('Could not load laboratory rooms');
         setRooms([]); 
       }
     } catch (err) {
-      console.error('Failed to load manager data', err);
       toast.error('Failed to load system data');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   const handleProvisionUser = async () => {
     if (!formData.name || !formData.email) return toast.error('Name and Email are required');
     
-    // NEW: Validation for Admin roles
-    if (formData.role === 'admin') {
-      if (!formData.room_id) return toast.error('Admins must be assigned a room');
-      if (!formData.password || formData.password.length < 6) return toast.error('Admins require a password (min 6 characters)');
+    if (formData.role === 'admin' && !formData.room_id) {
+      return toast.error('Admins must be assigned a room');
+    }
+    if (!formData.password || formData.password.length < 6) {
+      return toast.error('A temporary password is required (min 6 characters)');
     }
 
     setIsSubmitting(true);
@@ -83,8 +79,7 @@ export default function ManagerDashboard() {
       await api.post('/manager/users', formData);
       toast.success(`${formData.role} account provisioned!`);
       setIsModalOpen(false);
-      // Reset form including password
-      setFormData({ name: '', email: '', role: 'faculty', room_id: '', password: '' });
+      setFormData({ name: '', email: '', role: 'admin', room_id: '', password: '' });
       loadData(); 
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to provision user');
@@ -112,25 +107,22 @@ export default function ManagerDashboard() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8">
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-bold text-primary">System Manager</h1>
           <p className="text-sm text-muted mt-1">Master Control: Provision accounts and manage laboratory access.</p>
         </div>
         <NeumorphButton variant="primary" onClick={() => setIsModalOpen(true)} className="flex items-center gap-2">
-          <Plus size={16} /> Provision New User
+          <Plus size={16} /> Add an Admin Account
         </NeumorphButton>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <StatCard icon={ShieldCheck} label="Active Admins" value={stats.admins} color="bg-blue-100 text-blue-700" />
-        <StatCard icon={Users} label="Faculty Members" value={stats.faculty} color="bg-emerald-100 text-emerald-700" />
+        <StatCard icon={Users} label="College Deans" value={stats.deans} color="bg-orange-100 text-orange-700" />
         <StatCard icon={DoorOpen} label="Managed Rooms" value={stats.rooms} color="bg-amber-100 text-amber-700" />
       </div>
 
-      {/* User Master List */}
       <NeumorphCard className="p-0 overflow-hidden">
         <div className="p-4 bg-black/5 border-b flex justify-between items-center">
           <h2 className="font-bold text-gray-800">Master Access Control List</h2>
@@ -153,8 +145,10 @@ export default function ManagerDashboard() {
                     <p className="text-[10px] text-muted flex items-center gap-1 mt-0.5"><Mail size={10}/> {u.email}</p>
                   </td>
                   <td className="px-6 py-4">
+                    {/* ⚡ FIX: Ensured Dean has an explicitly defined orange badge color */}
                     <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest border shadow-sm
                       ${u.role === 'manager' ? 'bg-purple-100 text-purple-800 border-purple-200' : 
+                        u.role === 'dean' ? 'bg-orange-100 text-orange-800 border-orange-200' : 
                         u.role === 'admin' ? 'bg-blue-100 text-blue-800 border-blue-200' : 
                         'bg-emerald-100 text-emerald-800 border-emerald-200'}`}>
                       {u.role}
@@ -177,7 +171,6 @@ export default function ManagerDashboard() {
         </div>
       </NeumorphCard>
 
-      {/* Provisioning Modal */}
       <NeumorphModal open={isModalOpen} onClose={() => setIsModalOpen(false)} title="Provision Access">
         <div className="space-y-4 p-2">
           <NeumorphInput label="Full Name" placeholder="e.g. Engr. Juan Dela Cruz" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
@@ -186,13 +179,14 @@ export default function ManagerDashboard() {
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-muted uppercase tracking-widest">System Role</label>
             <select className="neu-input w-full bg-white text-sm" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value, room_id: '', password: ''})}>
-              <option value="faculty">Faculty Member (Request Items)</option>
               <option value="admin">Laboratory Admin (Manage Inventory)</option>
+              <option value="dean">Admin (College Dean)</option>
             </select>
           </div>
 
-          {formData.role === 'admin' && (
-            <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+          <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+            {/* Room ID is ONLY for admin */}
+            {formData.role === 'admin' && (
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">Assign to Laboratory Room</label>
                 <select className="neu-input w-full bg-amber-50 border-amber-200 text-sm" value={formData.room_id} onChange={e => setFormData({...formData, room_id: e.target.value})}>
@@ -200,17 +194,17 @@ export default function ManagerDashboard() {
                   {rooms.map(r => <option key={r.id} value={r.id}>{r.name} ({r.code})</option>)}
                 </select>
               </div>
+            )}
 
-              {/* NEW: Password Field for Admins Only */}
-              <NeumorphInput 
-                label="Temporary Password" 
-                placeholder="Must be at least 6 characters" 
-                type="password" 
-                value={formData.password} 
-                onChange={e => setFormData({...formData, password: e.target.value})} 
-              />
-            </div>
-          )}
+            {/* Password is required for BOTH Admin and Dean, so it always displays! */}
+            <NeumorphInput 
+              label="Temporary Password" 
+              placeholder="Must be at least 6 characters" 
+              type="password" 
+              value={formData.password} 
+              onChange={e => setFormData({...formData, password: e.target.value})} 
+            />
+          </div>
 
           <div className="flex justify-end gap-3 pt-4 border-t">
             <NeumorphButton variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</NeumorphButton>

@@ -68,18 +68,19 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // --- Logout ---
-  const logout = useCallback(async () => {
+// --- Logout ---
+  const logout = async () => {
     try {
-      await api.post('/auth/logout');
-    } catch (err) {
-      console.error('Server logout failed, forcing local cleanup', err);
+      await api.post('/auth/logout'); 
+    } catch (error) {
+      console.warn('Backend logout notification failed, but clearing session anyway.');
     } finally {
+      // ⚡ THE FIX: Use sessionStorage and the correct key name!
       sessionStorage.removeItem('invencea_token');
-      delete api.defaults.headers.common.Authorization;
+      delete api.defaults.headers.common['Authorization'];
       setUser(null);
     }
-  }, []);
+  };
 
   // --- Update User (Utility) ---
   const updateUser = useCallback((newData) => {

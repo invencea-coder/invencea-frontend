@@ -28,13 +28,11 @@ export default function ManagerDirectory() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const endpoint = activeTab === 'students' ? '/manager/students' : '/manager/users';
+      // ⚡ THE FIX: Changed '/manager/users' to '/manager/faculty'
+      const endpoint = activeTab === 'students' ? '/manager/students' : '/manager/faculty';
       const res = await api.get(endpoint);
       
-      let fetchedData = res.data?.data || [];
-      if (activeTab === 'faculty') {
-        fetchedData = fetchedData.filter(u => u.role === 'faculty');
-      }
+      const fetchedData = res.data?.data || [];
       setData(fetchedData);
       setSelectedIds([]); 
       setSearchQuery(''); // Clear search when switching tabs or reloading
@@ -124,7 +122,7 @@ export default function ManagerDirectory() {
     }
   };
 
-  // NEW: Handle PIN Reset 
+  // Handle PIN Reset 
   const handleResetPinClick = (id, name) => {
     setResetModalData({ id, name });
   };
@@ -133,7 +131,6 @@ export default function ManagerDirectory() {
     if (!resetModalData) return;
     setResettingPin(true);
     try {
-      // Endpoint assumes a PUT or POST request to reset the PIN to default '1234'
       await api.put(`/manager/students/${resetModalData.id}/reset-pin`);
       toast.success(`PIN for ${resetModalData.name} has been reset to 1234.`);
       setResetModalData(null);

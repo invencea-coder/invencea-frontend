@@ -1,92 +1,67 @@
 // src/pages/admin/Reports.jsx
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  Download, Trash2, Calendar,
+  Download, Trash2, Calendar, Building2,
   Loader2, FileSpreadsheet, Filter, X, Printer, Package, CheckCircle2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api/axiosClient.js';
 import { useAuth } from '../../context/AuthContext.jsx'; 
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 const formatDate = (value) => {
   if (!value) return '—';
   try {
-    return new Date(value).toLocaleString('en-US', {
-      month: 'short', day: 'numeric', year: 'numeric',
-      hour: '2-digit', minute: '2-digit'
-    });
-  } catch {
-    return String(value);
-  }
+    return new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch { return String(value); }
 };
 
-// Auto-formatter for Faculty Names
 const resolveFullName = (name) => {
   if (!name) return '—';
   if (name.trim() === 'Engr. Romeo') return 'Engr. Romeo T. San Gaspar';
   return name;
 };
 
-// Helpers for the printable logbook specifically
 const formatLogDate = (dateString) => {
   if (!dateString) return '';
   const d = new Date(dateString);
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const y = d.getFullYear();
-  return `${m}/${day}/${y}`;
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
 };
 
 const formatLogTime = (dateString) => {
   if (!dateString) return '';
-  const d = new Date(dateString);
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
+  return new Date(dateString).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
 };
 
 const checkComplied = (reqTime, issTime) => {
   if (!reqTime || !issTime) return false;
-  const diffMins = (new Date(issTime).getTime() - new Date(reqTime).getTime()) / 60000;
-  return diffMins <= 15;
+  return ((new Date(issTime).getTime() - new Date(reqTime).getTime()) / 60000) <= 15;
 };
 
-// ⚡ Bulletproof Time Resolvers
 const resolveRequestedAt = (row) => row.created_at || row.createdAt || row.requested_at || row.requestedAt || row.requested_time || null;
 const resolveApprovedAt  = (row) => row.approved_time || row.approvedTime || row.approved_at || row.approvedAt || null;
-const resolveIssuedAt    = (row) => row.issued_time || row.issuedTime || row.issued_at || row.issuedAt || null;
+
+const resolveIssuedAt = (row) => {
+  const direct = row.issued_time || row.issuedTime || row.issued_at || row.issuedAt;
+  if (direct) return direct;
+  const status = String(row.request_status || row.status || '').toUpperCase();
+  if (['ISSUED', 'PARTIALLY RETURNED', 'RETURNED'].includes(status)) return row.updated_at || row.updatedAt || resolveRequestedAt(row) || null;
+  return null;
+};
 
 const resolveReturnedAt = (row) => {
-  const direct = row.actual_returned_at || row.actualReturnedAt ||
-                 row.actual_return_time || row.actualReturnTime ||
-                 row.returned_at || row.returnedAt ||
-                 row.returned_time || row.returnedTime ||
-                 row.return_time || row.returnTime ||
-                 row.last_return_time || row.lastReturnTime;
+  const direct = row.actual_returned_at || row.actualReturnedAt || row.returned_at || row.returned_time || row.return_time || row.last_return_time;
   if (direct) return direct;
 
   if (row.items && Array.isArray(row.items)) {
-    const itemTimes = row.items
-      .filter(i => String(i.item_status || i.status || '').toUpperCase() === 'RETURNED')
-      .map(i => i.actual_returned_at || i.actualReturnedAt || 
-                i.actual_return_time || i.actualReturnTime || 
-                i.returned_at || i.returnedAt || 
-                i.returned_time || i.returnedTime || 
-                i.return_time || i.returnTime || 
-                i.last_return_time || i.lastReturnTime || 
-                i.updated_at || i.updatedAt)
-      .filter(Boolean);
-      
+    const itemTimes = row.items.filter(i => String(i.item_status || i.status || '').toUpperCase() === 'RETURNED')
+      .map(i => i.actual_returned_at || i.returned_at || i.returned_time || i.last_return_time || i.updated_at).filter(Boolean);
     if (itemTimes.length > 0) {
       itemTimes.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
       return itemTimes[0];
     }
   }
-
   const status = String(row.request_status || row.status || '').toUpperCase();
-  if (status === 'RETURNED' || status === 'PARTIALLY RETURNED') {
-    return row.updated_at || row.updatedAt || row.created_at || row.createdAt || null;
-  }
-  
+  if (status === 'RETURNED' || status === 'PARTIALLY RETURNED') return row.updated_at || row.updatedAt || row.created_at || null;
   return null;
 };
 
@@ -103,7 +78,6 @@ const getStatusColor = (status) => {
 const isValidItem = (item) => ['ISSUED', 'RETURNED', 'PARTIALLY RETURNED'].includes(String(item.item_status || item.status || '').toUpperCase());
 const getItemQty = (item) => item.quantity_issued || item.qty_requested || item.quantity || 1;
 
-// ─── CSV export ───────────────────────────────────────────────────────────────
 function exportToExcel(rows, filename, roleFilter) {
   if (!rows.length) return toast.error('Nothing to export');
   const showStudentId = roleFilter !== 'faculty';
@@ -140,7 +114,8 @@ function exportToExcel(rows, filename, roleFilter) {
     })
   ];
   
-  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  // ⚡ FIX: Added \uFEFF (UTF-8 BOM) so Excel handles special characters flawlessly
+  const blob = new Blob(['\uFEFF' + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = `${filename}.csv`; a.click();
@@ -148,7 +123,6 @@ function exportToExcel(rows, filename, roleFilter) {
   toast.success('Exported successfully');
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
 const DateInput = ({ label, value, onChange }) => (
   <div className="flex flex-col gap-1 w-full sm:w-auto">
     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">{label}</label>
@@ -159,118 +133,53 @@ const DateInput = ({ label, value, onChange }) => (
   </div>
 );
 
-// ─── Printable Official Logbook Component (A4 Formatted) ──────────────────────
 const PrintableLogSheet = ({ requests, targetMonth }) => {
   const issuedRequests = requests.filter(r => resolveIssuedAt(r));
 
   return (
     <div id="printable-logbook" className="hidden print:block bg-white w-full text-black font-sans">
-      
-      {/* ⚡ PERFECT A4 BORDER FIX & COLUMN WIDTHS */}
-      <style type="text/css" media="print">
+      <style>
         {`
-          @page { 
-            size: A4 portrait; 
-            margin: 6mm 10mm; 
+          @media print {
+            @page { size: A4 portrait; margin: 10mm; }
+            html, body, #root, .flex, .h-screen, .overflow-hidden {
+              height: auto !important; min-height: 100% !important; overflow: visible !important;
+              display: block !important; background-color: #ffffff !important; color: #000000 !important;
+              -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;
+            }
+            #printable-logbook { position: static !important; width: 100% !important; font-family: Arial, Helvetica, sans-serif !important; box-sizing: border-box !important; }
+            table { width: 100% !important; max-width: 100% !important; border-collapse: collapse !important; margin-top: 10px !important; table-layout: fixed !important; page-break-inside: auto !important; }
+            thead { display: table-header-group !important; }
+            tbody { page-break-inside: auto !important; }
+            tr { page-break-inside: avoid !important; page-break-after: auto !important; }
+            th, td { border: 1px solid #000 !important; padding: 6px 4px !important; font-size: 10px !important; color: #000 !important; box-sizing: border-box !important; word-wrap: break-word !important; overflow: visible !important; background-color: transparent !important; }
+            th { font-weight: bold !important; text-align: center !important; }
+            td.align-middle { vertical-align: middle !important; }
+            .print-header-img { object-fit: contain !important; }
+            .nowrap-cell { white-space: nowrap !important; text-align: center !important; }
           }
-          body { 
-            -webkit-print-color-adjust: exact !important; 
-            print-color-adjust: exact !important; 
-            background-color: #ffffff !important; 
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-          /* Collapse hidden siblings so they don't push the logbook down */
-          body * { visibility: hidden !important; height: 0 !important; min-height: 0 !important; overflow: hidden !important; }
-          #printable-logbook, #printable-logbook * { visibility: visible !important; height: auto !important; min-height: unset !important; overflow: visible !important; }
-
-          /* ⚡ KEY FIX: position:static lets browser paginate across multiple A4 pages.
-             position:absolute was pinning everything to page 1 and clipping the rest. */
-          #printable-logbook { 
-            position: static !important;
-            width: 100% !important;
-            font-family: Arial, Helvetica, sans-serif; 
-            box-sizing: border-box; 
-            background-color: #ffffff !important;
-          }
-          
-          table { 
-            width: 100%; 
-            max-width: 100%; 
-            border-collapse: collapse !important; 
-            margin-top: 10px; 
-            table-layout: fixed;
-            page-break-inside: auto !important;
-          }
-
-          /* Repeat the column-header row on every new page */
-          thead { 
-            display: table-header-group !important; 
-          }
-
-          tbody { 
-            page-break-inside: auto !important; 
-          }
-
-          /* Never split a data row across pages */
-          tr { 
-            page-break-inside: avoid !important; 
-            page-break-after: auto !important; 
-          }
-
-          th, td { 
-            border: 1px solid #000 !important; 
-            padding: 6px 4px; 
-            font-size: 10px; 
-            color: #000; 
-            box-sizing: border-box;
-            word-wrap: break-word;
-            overflow: visible !important;
-            background-color: transparent !important; 
-          }
-          th { font-weight: bold; text-align: center; }
-          td.align-middle { vertical-align: middle; }
-          
-          .print-header-img { object-fit: contain; }
-          
-          /* ⚡ Force Date and Time columns to never wrap */
-          .nowrap-cell { white-space: nowrap !important; text-align: center; }
         `}
       </style>
 
-      {/* HEADER */}
       <div className="flex items-center justify-between border-b-2 border-blue-900 pb-3 mb-4 bg-white">
         <img src="/csu-logo.png" alt="CSU" className="w-20 h-20 print-header-img" />
-        
         <div className="text-center flex-1 px-4">
           <h1 className="font-bold text-[16px] leading-snug uppercase text-black">Catanduanes State University</h1>
           <h2 className="font-bold text-[14px] leading-snug uppercase text-black">College of Engineering and Architecture</h2>
           <p className="text-[12px] italic text-black">Virac, Catanduanes</p>
         </div>
-
         <div className="flex gap-2 items-center">
           <img src="/bagong-pilipinas.png" alt="Bagong Pilipinas" className="w-14 h-14 print-header-img" />
           <img src="/iso-logo.png" alt="ISO" className="w-14 h-14 print-header-img" />
         </div>
       </div>
 
-      {/* METADATA */}
       <div className="text-[11px] mb-4 space-y-1.5 leading-snug text-black bg-white">
-        <div className="flex">
-          <span className="font-bold w-16 shrink-0 text-black">MFO:</span>
-          <span className="text-black">Issuance of Laboratory Apparatuses/Instruments</span>
-        </div>
-        <div className="flex">
-          <span className="font-bold w-16 shrink-0 text-black">Target:</span>
-          <span className="text-black">80% of Faculty and Students requests for available Laboratory Instruments issued within 15 minutes upon request</span>
-        </div>
-        <div className="flex">
-          <span className="font-bold w-16 shrink-0 text-black">Month:</span>
-          <span className="uppercase text-black">{targetMonth}</span>
-        </div>
+        <div className="flex"><span className="font-bold w-16 shrink-0 text-black">MFO:</span><span className="text-black">Issuance of Laboratory Apparatuses/Instruments</span></div>
+        <div className="flex"><span className="font-bold w-16 shrink-0 text-black">Target:</span><span className="text-black">80% of Faculty and Students requests for available Laboratory Instruments issued within 15 minutes upon request</span></div>
+        <div className="flex"><span className="font-bold w-16 shrink-0 text-black">Month:</span><span className="uppercase text-black">{targetMonth}</span></div>
       </div>
 
-      {/* TABLE */}
       <table className="bg-white">
         <thead>
           <tr>
@@ -281,12 +190,9 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
             <th colSpan={2}>Status</th>
           </tr>
           <tr>
-            <th style={{ width: '11%' }}>Date</th>
-            <th style={{ width: '7%' }}>Time</th>
-            <th style={{ width: '11%' }}>Date</th>
-            <th style={{ width: '7%' }}>Time</th>
-            <th style={{ width: '9%' }}>Complied</th>
-            <th style={{ width: '9%' }}>Not Complied</th>
+            <th style={{ width: '11%' }}>Date</th><th style={{ width: '7%' }}>Time</th>
+            <th style={{ width: '11%' }}>Date</th><th style={{ width: '7%' }}>Time</th>
+            <th style={{ width: '9%' }}>Complied</th><th style={{ width: '9%' }}>Not Complied</th>
           </tr>
         </thead>
         <tbody>
@@ -304,39 +210,16 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
 
               return validItems.map((item, index) => (
                 <tr key={`${req.id}-${index}`}>
-                  {/* Name cell spans all item rows */}
-                  {index === 0 && (
-                    <td rowSpan={rowSpan} className="align-middle">
-                      {resolveFullName(req.requester_name)}
-                    </td>
-                  )}
-                  
-                  {/* Item row is distinct */}
-                  <td className="pl-1">
-                    {item.item_name} {getItemQty(item) > 1 ? `x${getItemQty(item)}` : ''}
-                  </td>
-
-                  {/* Dates, Times, and Checks span all item rows */}
+                  {index === 0 && <td rowSpan={rowSpan} className="align-middle">{resolveFullName(req.requester_name)}</td>}
+                  <td className="pl-1">{item.item_name} {getItemQty(item) > 1 ? `x${getItemQty(item)}` : ''}</td>
                   {index === 0 && (
                     <>
-                      <td rowSpan={rowSpan} className="align-middle nowrap-cell">
-                        {formatLogDate(reqTime)}
-                      </td>
-                      <td rowSpan={rowSpan} className="align-middle nowrap-cell">
-                        {formatLogTime(reqTime)}
-                      </td>
-                      <td rowSpan={rowSpan} className="align-middle nowrap-cell">
-                        {formatLogDate(issTime)}
-                      </td>
-                      <td rowSpan={rowSpan} className="align-middle nowrap-cell">
-                        {formatLogTime(issTime)}
-                      </td>
-                      <td rowSpan={rowSpan} className="text-center align-middle font-bold text-[12px]">
-                        {isComplied ? '✓' : ''}
-                      </td>
-                      <td rowSpan={rowSpan} className="text-center align-middle font-bold text-[12px]">
-                        {!isComplied ? '✓' : ''}
-                      </td>
+                      <td rowSpan={rowSpan} className="align-middle nowrap-cell">{formatLogDate(reqTime)}</td>
+                      <td rowSpan={rowSpan} className="align-middle nowrap-cell">{formatLogTime(reqTime)}</td>
+                      <td rowSpan={rowSpan} className="align-middle nowrap-cell">{formatLogDate(issTime)}</td>
+                      <td rowSpan={rowSpan} className="align-middle nowrap-cell">{formatLogTime(issTime)}</td>
+                      <td rowSpan={rowSpan} className="text-center align-middle font-bold text-[12px]">{isComplied ? '✓' : ''}</td>
+                      <td rowSpan={rowSpan} className="text-center align-middle font-bold text-[12px]">{!isComplied ? '✓' : ''}</td>
                     </>
                   )}
                 </tr>
@@ -349,12 +232,16 @@ const PrintableLogSheet = ({ requests, targetMonth }) => {
   );
 };
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
 export default function Reports() {
   const { user } = useAuth();
   const [rows, setRows]               = useState([]);
   const [loading, setLoading]         = useState(true);
   const [roleFilter, setRoleFilter]   = useState('all');
+  
+  // ⚡ FIX: Room Filtering States for Deans/Managers
+  const [rooms, setRooms]             = useState([]);
+  const [roomFilter, setRoomFilter]   = useState('all');
+  
   const [dateFrom, setDateFrom]       = useState('');
   const [dateTo, setDateTo]           = useState('');
   const [filterMode, setFilterMode]   = useState(false);
@@ -363,13 +250,28 @@ export default function Reports() {
 
   const isFiltered = filterMode && (dateFrom || dateTo);
 
+  // ⚡ FIX: Fetch available rooms for the filter if user is Manager/Dean
+  useEffect(() => {
+    if (!user?.room_id && ['manager', 'dean'].includes(user?.role?.toLowerCase())) {
+      api.get('/admin/rooms')
+        .then(res => setRooms(res.data?.data || res.data || []))
+        .catch(err => console.error('Failed to load rooms', err));
+    }
+  }, [user]);
+
   const fetchReports = useCallback(async () => {
     setLoading(true);
     try {
       const params = {};
       if (filterMode && dateFrom) params.from = dateFrom;
       if (filterMode && dateTo)   params.to   = dateTo;
-      if (user?.room_id) params.room_id = user.room_id;
+      
+      // ⚡ FIX: Ensure room ID is securely sent based on role
+      if (user?.room_id) {
+        params.room_id = user.room_id; // Admins
+      } else if (roomFilter !== 'all') {
+        params.room_id = roomFilter; // Managers/Deans using the dropdown
+      }
       
       const res = await api.get('/reports/issued', { params });
       let fetchedData = res.data?.data ?? res.data ?? [];
@@ -384,12 +286,11 @@ export default function Reports() {
 
       setRows(fetchedData);
     } catch (err) {
-      console.error('Fetch reports error', err);
       toast.error('Failed to load reports');
     } finally {
       setLoading(false);
     }
-  }, [filterMode, dateFrom, dateTo, user?.room_id]);
+  }, [filterMode, dateFrom, dateTo, user?.room_id, roomFilter]);
 
   useEffect(() => { fetchReports(); }, [fetchReports]);
 
@@ -406,7 +307,7 @@ export default function Reports() {
           from: dateFrom || undefined, 
           to: dateTo || undefined, 
           type: roleFilter !== 'all' ? roleFilter : undefined,
-          room_id: user?.room_id 
+          room_id: user?.room_id || (roomFilter !== 'all' ? roomFilter : undefined)
         }
       });
       toast.success('Filtered records deleted');
@@ -423,7 +324,6 @@ export default function Reports() {
 
   const showStudentId = roleFilter !== 'faculty';
 
-  // Format the Month text for the official logbook header
   const getLogbookMonth = () => {
     if (dateFrom && dateTo) return `${new Date(dateFrom).toLocaleDateString('en-US', { month: 'long', year: 'numeric'})} - ${new Date(dateTo).toLocaleDateString('en-US', { month: 'long', year: 'numeric'})}`;
     if (dateFrom) return `${new Date(dateFrom).toLocaleDateString('en-US', { month: 'long', year: 'numeric'})}`;
@@ -432,7 +332,6 @@ export default function Reports() {
 
   return (
     <>
-      {/* ─── WEB DASHBOARD (Hides when printing) ─── */}
       <div className="print:hidden p-4 md:p-8 max-w-7xl mx-auto space-y-6">
 
         {/* Header */}
@@ -454,14 +353,34 @@ export default function Reports() {
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-4 bg-white p-4 rounded-2xl border border-black/5 shadow-sm">
-          <div className="flex bg-gray-100 p-1 rounded-xl">
-            {['all', 'faculty', 'student'].map(r => (
-              <button key={r} onClick={() => setRoleFilter(r)} className={`px-5 py-2 rounded-lg text-sm font-bold capitalize transition-all ${roleFilter === r ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                {r}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-4 flex-1">
+            <div className="flex bg-gray-100 p-1 rounded-xl">
+              {['all', 'faculty', 'student'].map(r => (
+                <button key={r} onClick={() => setRoleFilter(r)} className={`px-5 py-2 rounded-lg text-sm font-bold capitalize transition-all ${roleFilter === r ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                  {r}
+                </button>
+              ))}
+            </div>
+
+            {/* ⚡ FIX: Room Filter Dropdown (Only visible to Dean/Manager) */}
+            {!user?.room_id && rooms.length > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="bg-gray-100 p-2 rounded-lg text-gray-500"><Building2 size={16} /></div>
+                <select 
+                  value={roomFilter} 
+                  onChange={e => setRoomFilter(e.target.value)} 
+                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 cursor-pointer"
+                >
+                  <option value="all">All Laboratories</option>
+                  {rooms.map(r => (
+                    <option key={r.id} value={r.id}>{r.name} ({r.code})</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
-          <button onClick={() => setFilterMode(f => !f)} className={`ml-auto px-5 py-2 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2 ${filterMode ? 'bg-primary text-white border-primary' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'}`}>
+
+          <button onClick={() => setFilterMode(f => !f)} className={`px-5 py-2 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2 ${filterMode ? 'bg-primary text-white border-primary' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'}`}>
             <Filter size={16} /> {filterMode ? 'Close Filters' : 'Filter by Date'}
           </button>
         </div>
@@ -519,7 +438,7 @@ export default function Reports() {
                     const validItems = (row.items || []).filter(isValidItem);
 
                     return (
-                      <tr key={idx} className="hover:bg-primary/[0.02] transition-colors">
+                      <tr key={row.id || idx} className="hover:bg-primary/[0.02] transition-colors">
                         <td className="px-6 py-4 align-top">
                           <span className={`inline-block text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider border ${getStatusColor(reqStatus)}`}>
                             {reqStatus}
@@ -586,7 +505,6 @@ export default function Reports() {
           )}
         </div>
 
-        {/* Delete confirm modal */}
         {deleteConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 animate-in zoom-in-95 duration-200">
@@ -611,7 +529,6 @@ export default function Reports() {
         )}
       </div>
 
-      {/* ─── PRINTABLE OFFICIAL LOGBOOK (Hides on the Web, ONLY shows on Paper) ─── */}
       <PrintableLogSheet requests={filteredRows} targetMonth={getLogbookMonth()} />
     </>
   );

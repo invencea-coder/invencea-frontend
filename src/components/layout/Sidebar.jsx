@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import {
   LayoutDashboard, Package, ClipboardList, BarChart3,
   DoorOpen, LogOut, ChevronLeft, ChevronRight,
-  PlusCircle, FileText, User, ScanBarcode, Users, X
+  PlusCircle, FileText, User, ScanBarcode, Users, X, Activity // <-- Added Activity icon
 } from 'lucide-react';
 
 const navByRole = {
@@ -29,6 +29,10 @@ const navByRole = {
   manager: [
     { label: 'Dashboard', icon: LayoutDashboard, to: '/manager', end: true },
     { label: 'Directory', icon: Users, to: '/manager/directory' },
+    { label: 'Login Audits', icon: Activity, to: '/manager/audits' }, // <-- ADDED
+  ],
+  dean: [
+    { label: 'Global Reports', icon: BarChart3, to: '/dean/reports' }, // <-- ADDED DEAN
   ],
 };
 

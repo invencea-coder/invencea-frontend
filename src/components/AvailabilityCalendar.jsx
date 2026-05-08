@@ -146,6 +146,11 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
     ? (selectedDate ? new Date(selectedDate.split('-')[0], selectedDate.split('-')[1] - 1, selectedDate.split('-')[2]) : null)
     : selected;
 
+  // ⚡ THE FIX: DETECT IF THE SELECTED DATE IS IN THE PAST
+  const todayStr = format(today, 'yyyy-MM-dd');
+  const activeDateStr = activeDate ? format(activeDate, 'yyyy-MM-dd') : null;
+  const isPastActiveDate = activeDateStr && activeDateStr < todayStr;
+
   const filteredEvents = useMemo(() => {
     if (!itemFilter.trim()) return events;
     const q = itemFilter.toLowerCase();
@@ -240,7 +245,6 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
             dayEvts.forEach(e => { groups[e.status] = (groups[e.status] || 0) + 1; });
             const hasMatch = hasFilter && dayEvts.length > 0;
 
-            // Check if any event on this day is overdue
             const hasOverdue = dayEvts.some(isEventOverdue);
 
             return (
@@ -252,7 +256,6 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
                   opacity: cur ? 1 : 0.25, transition: "all 0.15s", minHeight: "56px", position: "relative", display: "flex", flexDirection: "column", alignItems: "center"
                 }}>
                 
-                {/* ⚡ UPDATED: Added the overdue icon next to the date */}
                 <div style={{ 
                   display: "flex", 
                   alignItems: "center", 
@@ -367,19 +370,31 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
               </div>
             )}
 
-            {/* ACTION BUTTON FOR ADMINS */}
-            {onViewList && (
+            {/* ⚡ THE FIX: LOCK PAST DATES */}
+            {isPastActiveDate ? (
               <div className="pt-4 border-t border-gray-200 mt-auto">
-                <button 
-                  onClick={() => onViewList(activeDate)} 
-                  className="w-full py-3 bg-blue-50 text-blue-700 font-bold text-xs rounded-xl hover:bg-blue-100 transition-colors flex items-center justify-center gap-2 border border-blue-100 shadow-sm"
-                >
-                  <ListTodo size={14}/> Manage Requests for {fmtDate(activeDate)}
-                </button>
+                <div className="bg-amber-50 text-amber-800 p-3 rounded-xl border border-amber-200 flex items-start gap-2 text-xs font-medium">
+                  <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                  <p>This date is in the past. New requests cannot be scheduled, but historical bookings and alerts remain visible.</p>
+                </div>
               </div>
-            )}
+            ) : (
+              <>
+                {/* ACTION BUTTON FOR ADMINS */}
+                {onViewList && (
+                  <div className="pt-4 border-t border-gray-200 mt-auto">
+                    <button 
+                      onClick={() => onViewList(activeDate)} 
+                      className="w-full py-3 bg-blue-50 text-blue-700 font-bold text-xs rounded-xl hover:bg-blue-100 transition-colors flex items-center justify-center gap-2 border border-blue-100 shadow-sm"
+                    >
+                      <ListTodo size={14}/> Manage Requests for {fmtDate(activeDate)}
+                    </button>
+                  </div>
+                )}
 
-            {catalogNode}
+                {catalogNode}
+              </>
+            )}
 
           </div>
 
@@ -484,19 +499,27 @@ export default function AvailabilityCalendar({ roomId, onDateSelect, selectedDat
                     </div>
                   </div>
 
-                  {/* ⚡ NEW ACTION BUTTON: Process Request */}
-                  {onManageBooking && !publicMode && (
+                  {/* ⚡ THE FIX: Hide 'Process Request' for completed past bookings, BUT allow processing if it's Overdue */}
+                  {isPastActiveDate && !overdue && !['ISSUED', 'PARTIALLY RETURNED'].includes(String(selectedBooking.status).toUpperCase()) ? (
                     <div className="p-4 border-t border-gray-100 bg-slate-50">
-                      <button 
-                        onClick={() => {
-                          setSelectedBooking(null);
-                          onManageBooking(selectedBooking);
-                        }}
-                        className="w-full py-3.5 bg-gray-900 text-white font-black text-sm rounded-xl hover:bg-black transition-all flex items-center justify-center gap-2 shadow-lg shadow-gray-900/20 active:scale-[0.98]"
-                      >
-                        Process Request <ArrowRightCircle size={16} />
-                      </button>
+                      <div className="bg-gray-100 text-gray-500 p-3 rounded-xl border border-gray-200 flex items-center justify-center gap-2 text-xs font-bold">
+                        <Clock size={16} /> Past booking locked from processing
+                      </div>
                     </div>
+                  ) : (
+                    onManageBooking && !publicMode && (
+                      <div className="p-4 border-t border-gray-100 bg-slate-50">
+                        <button 
+                          onClick={() => {
+                            setSelectedBooking(null);
+                            onManageBooking(selectedBooking);
+                          }}
+                          className="w-full py-3.5 bg-gray-900 text-white font-black text-sm rounded-xl hover:bg-black transition-all flex items-center justify-center gap-2 shadow-lg shadow-gray-900/20 active:scale-[0.98]"
+                        >
+                          Process Request <ArrowRightCircle size={16} />
+                        </button>
+                      </div>
+                    )
                   )}
 
                 </div>

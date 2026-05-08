@@ -10,6 +10,7 @@ import ForceChangePasswordModal from '../../components/admin/ForceChangePassword
 import { io } from 'socket.io-client';
 import api from '../../api/axiosClient.js';
 import { useAuth } from '../../context/AuthContext.jsx';
+import toast from 'react-hot-toast';
 
 // ── Time helpers (Forced to Philippines Time UTC+8) ───────────────────────────
 const toPHTime = (d) => {
@@ -63,15 +64,9 @@ const StatCard = ({ icon: Icon, label, value, color, sub, onClick }) => (
 const ROW_HEIGHT  = 64; 
 const MAX_VISIBLE = 4;
 
-const HONORIFICS = new Set(['mr.', 'mrs.', 'ms.', 'miss', 'dr.', 'prof.', 'sr.', 'jr.']);
-
 const getFirstName = (fullName) => {
   if (!fullName) return '';
-
-  // 1. Strip out common titles (add any others you might use)
   const cleanName = fullName.replace(/^(Engr\.|Dr\.|Prof\.|Mr\.|Mrs\.|Ms\.|Miss)\s+/i, '');
-
-  // 2. Split the cleaned name by spaces and grab the first word
   return cleanName.split(' ')[0];
 };
 
@@ -89,10 +84,15 @@ export default function AdminDashboard() {
   const loadDashboardData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
+      // ⚡ THE FIX: Explicitly send `user.room_id` to the backend so it ONLY
+      // calculates stats and grabs recent history for THIS specific room.
+      const params = { room_id: user?.room_id };
+
       const [statsRes, recentRes] = await Promise.all([
-        api.get('/admin/dashboard/stats'),
-        api.get('/admin/dashboard/recent'),
+        api.get('/admin/dashboard/stats', { params }),
+        api.get('/admin/dashboard/recent', { params }),
       ]);
+      
       setStats(statsRes.data?.data ?? statsRes.data);
 
       const nowPH = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Manila"}));
@@ -112,12 +112,12 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user?.room_id]);
 
   useEffect(() => { loadDashboardData(); }, [loadDashboardData]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // ⚡ SOCKET LIVE EVENTS (Strictly Room Filtered) ⚡
+  // ⚡ SOCKET LIVE EVENTS (Strictly Room Filtered)
   // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const socketURL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:4000';
@@ -125,15 +125,11 @@ export default function AdminDashboard() {
 
     // Helper to check if a live event belongs to this admin's room
     const isMyRoom = (payload) => {
-      if (!payload) return true; // generic broadcast pass
+      if (!payload) return true; 
       const targetRoom = payload.room_id || payload.roomId;
       
-      // If this Admin is assigned to a specific room
-      if (user?.room_id) {
-        // And the payload targets a SPECIFIC room that is NOT the admin's room -> Block it.
-        if (targetRoom && String(targetRoom) !== String(user.room_id)) {
-          return false;
-        }
+      if (user?.room_id && targetRoom && String(targetRoom) !== String(user.room_id)) {
+        return false;
       }
       return true;
     };
@@ -143,19 +139,23 @@ export default function AdminDashboard() {
     socket.on('request-issued',    (payload) => { if (isMyRoom(payload)) loadDashboardData(true); });
     socket.on('new-request',       (payload) => { if (isMyRoom(payload)) loadDashboardData(true); });
 
-    socket.on('admin-session-alert', (data) => {
-      if (!isMyRoom(data)) return; // 🚨 IGNORE ALERTS FOR OTHER ROOMS 🚨
-      
-      setSessionAlerts(prev => {
-        const key = `${data.session_id}-${data.type}`;
-        const exists = prev.find(a => `${a.session_id}-${a.type}` === key);
-        if (exists) return prev;
-        return [data, ...prev].slice(0, 10);
-      });
+    socket.on('admin-session-alert', (payload) => {
+      if (isMyRoom(payload)) {
+        const audio = new Audio('/notification-sound.mp3'); 
+        audio.play().catch(e => console.log("Audio play blocked"));
+        toast.error('Lab Session Alert!');
+        
+        // Add to the alert banner list
+        setSessionAlerts(prev => {
+          // Avoid duplicates
+          if (prev.some(a => a.session_id === payload.session_id && a.type === payload.type)) return prev;
+          return [payload, ...prev];
+        });
+      }
     });
 
     return () => socket.disconnect();
-  }, [loadDashboardData, user?.room_id]); // ⚡ Ensure user?.room_id is in the dependencies
+  }, [loadDashboardData, user?.room_id]); 
 
   const dismissAlert = (idx) => setSessionAlerts(prev => prev.filter((_, i) => i !== idx));
 
@@ -302,7 +302,6 @@ export default function AdminDashboard() {
               <table className="w-full text-left min-w-[800px]">
                 <tbody className="divide-y divide-black/5">
                   {recent.map((req) => {
-                    // Safe mapping for unified database schema
                     const reqTime = req.created_at || req.requested_time;
                     const reqStatus = req.status;
                     const studentId = req.student_id || req.requester_id;

@@ -298,11 +298,17 @@ export default function AdminRequests() {
   const calendarEventsRef  = useRef([]);
   const activeTimeframeRef = useRef(null);
   const selectedReqRef     = useRef(null);
+  const adjustedItemsRef   = useRef([]);
+  const manualItemsRef     = useRef([]);
 
   useEffect(() => { issueModalOpenRef.current  = issueModal;  }, [issueModal]);
   useEffect(() => { manualModalOpenRef.current = manualModal; }, [manualModal]);
   useEffect(() => { roomIdRef.current = user?.room_id; },        [user?.room_id]);
   useEffect(() => { selectedReqRef.current = selectedReq; },     [selectedReq]);
+
+  // Synchronize state changes back to refs
+  useEffect(() => { adjustedItemsRef.current = adjustedItems; }, [adjustedItems]);
+  useEffect(() => { manualItemsRef.current = manualItems; }, [manualItems]);
 
   // Automatically update the "Active Timeframe" ref so the scanner always knows the current boundary
   useEffect(() => {
@@ -464,7 +470,6 @@ export default function AdminRequests() {
     const results = [];
     for (const ev of calendarEventsRef.current) {
       if (excludeReqId && String(ev.id) === String(excludeReqId)) continue;
-      // ⚡ FIX: Use the correct function name (isExpiredRow) instead of isCalendarEventExpired
       if (isExpiredRow(ev)) continue;
       if (!['PENDING', 'PENDING APPROVAL', 'APPROVED', 'ISSUED', 'PARTIALLY RETURNED'].includes(ev.status?.toUpperCase())) continue;
 
@@ -678,7 +683,7 @@ export default function AdminRequests() {
 
   // ── ⚡ SYNCHRONOUS CART ACTIONS (PREVENTS OVERLAPS) ──
   const handleScan = useCallback((barcode) => {
-    const norm = (b) => String(b ?? '').trim().replace(/^0+(\d)/, '$1');
+    const norm = (b) => String(b ?? '').trim(); 
     const inv  = invRef.current.find(i => norm(i.barcode) === norm(barcode));
 
     if (!inv) { setTimeout(() => toast.error(`Barcode "${barcode}" not found in inventory.`), 0); return; }
@@ -695,6 +700,7 @@ export default function AdminRequests() {
     const isFungible = inv.kind === 'quantity' || inv.kind === 'consumable';
     const currentList = issueModalOpenRef.current ? adjustedItemsRef.current : manualItemsRef.current;
     const setFn = issueModalOpenRef.current ? setAdjustedItems : setManualItems;
+    const listRef = issueModalOpenRef.current ? adjustedItemsRef : manualItemsRef; 
     
     const existingIdx = currentList.findIndex(it => 
       (inv.kind === 'quantity' && String(it.stock_id) === String(inv.id)) ||
@@ -707,23 +713,26 @@ export default function AdminRequests() {
         const it = currentList[existingIdx];
         if (!it.hasBeenScanned) {
           setTimeout(() => toast.success(`${inv.name} verified.`), 0);
-          const newList = [...currentList]; newList[existingIdx] = { ...it, hasBeenScanned: true }; setFn(newList);
+          const newList = [...currentList]; newList[existingIdx] = { ...it, hasBeenScanned: true }; 
+          setFn(newList); listRef.current = newList;
         } else {
           if (it.actualQuantity + 1 > avail) {
              setTimeout(() => toast.error(`Only ${avail} available during this timeframe.`), 0);
           } else {
              setTimeout(() => toast.success(`Increased ${inv.name} quantity to ${it.actualQuantity + 1}.`), 0);
-             const newList = [...currentList]; newList[existingIdx] = { ...it, actualQuantity: it.actualQuantity + 1 }; setFn(newList);
+             const newList = [...currentList]; newList[existingIdx] = { ...it, actualQuantity: it.actualQuantity + 1 }; 
+             setFn(newList); listRef.current = newList;
           }
         }
       } else {
         setTimeout(() => toast.success(`Added: ${inv.name}`), 0);
-        setFn([...currentList, {
+        const newList = [...currentList, {
             id: `new-${Date.now()}`, item_name: inv.name, inventory_type_id: inv.inventory_type_id,
             stock_id: inv.kind === 'quantity' ? inv.id : null, consumable_id: inv.kind === 'consumable' ? inv.id : null,
             quantity: 1, actualQuantity: 1, isNew: true, assignTo: 'Requester', scannedPhysicalItems: [],
             isQtyMode: inv.kind === 'quantity', kind: inv.kind, maxAvail: inv.maxAvail, hasBeenScanned: true 
-        }]);
+        }];
+        setFn(newList); listRef.current = newList;
       }
     } else {
       if (currentList.some(it => it.scannedPhysicalItems?.some(s => s.id === inv.id))) {
@@ -732,13 +741,15 @@ export default function AdminRequests() {
         const idx = currentList.findIndex(it => !it.isQtyMode && !it.consumable_id && String(it.inventory_type_id) === String(inv.inventory_type_id) && (it.scannedPhysicalItems?.length ?? 0) < it.actualQuantity);
         if (idx >= 0) {
            setTimeout(() => toast.success(`Matched: ${inv.barcode}`), 0);
-           const newList = [...currentList]; newList[idx] = { ...newList[idx], scannedPhysicalItems: [...(newList[idx].scannedPhysicalItems ?? []), inv] }; setFn(newList);
+           const newList = [...currentList]; newList[idx] = { ...newList[idx], scannedPhysicalItems: [...(newList[idx].scannedPhysicalItems ?? []), inv] }; 
+           setFn(newList); listRef.current = newList;
         } else {
            setTimeout(() => toast.success(`Added: ${inv.name}`), 0);
-           setFn([...currentList, {
+           const newList = [...currentList, {
                id: `new-${Date.now()}`, item_name: inv.name, inventory_type_id: inv.inventory_type_id,
                quantity: 1, actualQuantity: 1, isNew: true, assignTo: 'Requester', scannedPhysicalItems: [inv], isQtyMode: false,
-           }]);
+           }];
+           setFn(newList); listRef.current = newList;
         }
       }
     }
@@ -748,7 +759,7 @@ export default function AdminRequests() {
     let lastKeyTime = Date.now();
     const onKey = (e) => {
       const tag = document.activeElement?.tagName?.toLowerCase();
-      if (['input', 'textarea', 'select'].includes(tag)) return;
+      if (['input', 'textarea', 'select'].includes(tag)) return; 
 
       const now = Date.now();
       if (now - lastKeyTime > 50) barcodeBufferRef.current = '';
@@ -811,6 +822,16 @@ export default function AdminRequests() {
               {item.isNew && <span className="ml-1 text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded uppercase">Added</span>}
               {isFungible && <span className="ml-1 text-[9px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded uppercase">{item.consumable_id ? 'consumable' : 'qty'}</span>}
             </p>
+            
+            {/* ⚡ Explicitly show the barcode for QTY/Consumable items */}
+            {isFungible && (item.barcode || item.stock_barcode || item.consumable_barcode || item.inventory_item_barcode) && (
+              <div className="mt-1.5">
+                <span className="text-[10px] font-mono font-bold text-gray-500 bg-black/5 px-1.5 py-0.5 rounded tracking-wide">
+                  {item.barcode || item.stock_barcode || item.consumable_barcode || item.inventory_item_barcode}
+                </span>
+              </div>
+            )}
+
             {!isFungible && item.actualQuantity > 0 && relatedInv.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {relatedInv.map(inv => {
@@ -975,28 +996,20 @@ export default function AdminRequests() {
           <div className="flex-1 overflow-y-auto bg-gray-50/30 custom-scrollbar">
             <div className="sticky top-0 bg-gray-100/90 backdrop-blur-sm border-b border-black/5 px-4 py-2 flex items-center justify-between z-10">
               <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Needs Action</span>
-              <span className="text-[10px] font-black bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{overdueQueue.length + pendingQueue.length}</span>
+              {/* ⚡ THE FIX: "Needs Action" badge strictly matches pending queue count! */}
+              <span className="text-[10px] font-black bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{pendingQueue.length}</span>
             </div>
 
             <div className="p-3 space-y-2">
-              {overdueQueue.length === 0 && pendingQueue.length === 0 && (
+              {/* ⚡ THE FIX: Queue empty check strictly matches pending queue! */}
+              {pendingQueue.length === 0 && (
                 <div className="py-10 text-center text-gray-400">
                   <CheckCircle2 size={32} className="mx-auto mb-2 opacity-30" />
                   <p className="text-xs font-bold">Queue is clear</p><p className="text-[10px] mt-1">All caught up!</p>
                 </div>
               )}
 
-              {overdueQueue.map(r => (
-                <button key={r.id} onClick={() => { setActiveTab('OVERDUE'); setSelectedDate(null); setSearchQuery(String(r.id)); setExpandedRow(r.id); }} className="w-full text-left bg-red-50 border border-red-200 rounded-xl p-3 hover:border-red-400 transition-colors shadow-sm">
-                  <div className="flex items-start justify-between mb-1">
-                    <span className="text-xs font-black text-red-800">#{r.id}</span>
-                    <span className="text-[9px] font-black bg-red-100 text-red-700 px-1.5 py-0.5 rounded flex items-center gap-1"><Flame size={10} /> OVERDUE</span>
-                  </div>
-                  <p className="text-xs font-bold text-gray-800 truncate">{r.requester_name || r.student_id}</p>
-                  <p className="text-[10px] text-red-600 mt-1 flex items-center gap-1"><Timer size={10} /> Due {fmtTime(r.return_deadline)}</p>
-                </button>
-              ))}
-
+              {/* ⚡ THE FIX: Only PENDING items rendered in "Needs Action" section */}
               {pendingQueue.map(r => (
                 <div key={r.id} className="bg-white border border-amber-200 rounded-xl p-3 shadow-sm relative overflow-hidden">
                   <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-400" />
@@ -1314,10 +1327,20 @@ export default function AdminRequests() {
             <h3 className="text-xs font-black text-gray-700 uppercase tracking-widest mb-3 flex items-center gap-1.5"><Scan size={14} /> Step 2: Verify Physical Items</h3>
             <div className="relative mb-3">
               <NeumorphInput
-                placeholder="Search by name or barcode to add items…" value={itemSearch} onChange={e => setItemSearch(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && itemSearch.trim()) { e.preventDefault(); handleScan(itemSearch.trim()); setItemSearch(''); } }}
-                icon={<Search size={14} />} className="w-full"
-              />
+  placeholder="Search by name or barcode to add items…" 
+  value={itemSearch} 
+  onChange={e => setItemSearch(e.target.value)}
+  onKeyDown={(e) => { 
+    if (e.key === 'Enter' && e.currentTarget.value.trim()) { 
+      e.preventDefault(); 
+      e.stopPropagation(); 
+      handleScan(e.currentTarget.value.trim()); 
+      setItemSearch(''); 
+    } 
+  }}
+  icon={<Search size={14} />} 
+  className="w-full"
+/>
               {itemSearch && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-black/10 rounded-xl shadow-xl max-h-44 overflow-y-auto">
                   {inventory.filter(i => {
@@ -1394,10 +1417,20 @@ export default function AdminRequests() {
             <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Scan size={12} /> Items to Issue</h3>
             <div className="relative mb-3">
               <NeumorphInput
-                placeholder="Search inventory or scan barcode…" value={manualForm.search} onChange={e => setManualForm(f => ({ ...f, search: e.target.value }))}
-                onKeyDown={(e) => { if (e.key === 'Enter' && manualForm.search.trim()) { e.preventDefault(); handleScan(manualForm.search.trim()); setManualForm(f => ({ ...f, search: '' })); } }}
-                icon={<Search size={14} />} className="w-full"
-              />
+  placeholder="Search inventory or scan barcode…" 
+  value={manualForm.search} 
+  onChange={e => setManualForm(f => ({ ...f, search: e.target.value }))}
+  onKeyDown={(e) => { 
+    if (e.key === 'Enter' && e.currentTarget.value.trim()) { 
+      e.preventDefault(); 
+      e.stopPropagation(); 
+      handleScan(e.currentTarget.value.trim()); 
+      setManualForm(f => ({ ...f, search: '' })); 
+    } 
+  }}
+  icon={<Search size={14} />} 
+  className="w-full"
+/>
               {manualForm.search && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-black/10 rounded-xl shadow-xl max-h-44 overflow-y-auto">
                   {inventory.filter(i => {
