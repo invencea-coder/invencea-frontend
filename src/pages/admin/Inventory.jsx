@@ -451,12 +451,14 @@ export default function Inventory() {
                                 {!isQtyMode && folder.kind !== 'consumable' && (
                                   <td className="px-4 py-3">
                                     {roomId === 3 ? (
-                                      <div className="max-w-sm">
-                                        <span className="block font-bold text-gray-800 line-clamp-1" title={itemMeta.title}>{itemMeta.title || '—'}</span>
-                                        <span className="block text-[9px] text-gray-500 line-clamp-1 mt-0.5" title={itemMeta.authors}>{itemMeta.authors}</span>
-                                        <span className="block text-[9px] text-blue-500 font-mono mt-0.5">{itemMeta.code}</span>
-                                      </div>
-                                    ) : (
+                                  <div className="max-w-sm">
+                                    {/* ⚡ FIX: Title is stored as unit.name */}
+                                    <span className="block font-bold text-gray-800 line-clamp-1" title={unit.name}>{unit.name || '—'}</span>
+                                    {/* ⚡ FIX: Authors and Year are in the folder's type_metadata */}
+                                    <span className="block text-[9px] text-gray-500 line-clamp-1 mt-0.5" title={folder.type_metadata?.authors}>{folder.type_metadata?.authors || '—'}</span>
+                                    <span className="block text-[9px] text-blue-500 font-mono mt-0.5">{folder.type_metadata?.year}</span>
+                                  </div>
+                                ) : (
                                       <>
                                         <span className="font-mono text-gray-700">{itemMeta.serial_number || '—'}</span>
                                         {roomId === 2 && itemMeta.analog_digital && itemMeta.analog_digital !== 'n/a' && (
