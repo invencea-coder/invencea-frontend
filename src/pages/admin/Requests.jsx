@@ -356,21 +356,40 @@ export default function AdminRequests() {
 
   useEffect(() => { setExpandedRow(null); }, [activeTab]);
 
+  // ⚡ THE FIX: Real-time countdown clock in Issue Modal unlocking exactly at 0s
   useEffect(() => {
     if (!issueModal || !selectedReq) return;
-    const isReservation = !!(selectedReq.pickup_start || selectedReq.pickup_datetime);
+    const isReservation = !!(selectedReq.pickup_start || selectedReq.pickup_datetime || selectedReq.scheduled_time);
     if (!isReservation) { setTimeToOpen(null); return; }
 
-    const startMs = toPHTime(selectedReq.pickup_start || selectedReq.pickup_datetime).getTime();
+    const startMs = toPHTime(selectedReq.pickup_start || selectedReq.pickup_datetime || selectedReq.scheduled_time).getTime();
+    
+    let id;
     const tick = () => {
       const diff = startMs - Date.now();
-      if (diff <= 0) { setTimeToOpen(null); return; }
-      const h = Math.floor(diff / 3_600_000); const m = Math.floor((diff % 3_600_000) / 60_000);
-      setTimeToOpen(`Opens in ${h}h ${m}m`);
+      if (diff <= 0) { 
+        setTimeToOpen(null); 
+        clearInterval(id);
+        return; 
+      }
+      
+      const h = Math.floor(diff / 3_600_000); 
+      const m = Math.floor((diff % 3_600_000) / 60_000);
+      const s = Math.floor((diff % 60_000) / 1000);
+      
+      if (h > 0) {
+        setTimeToOpen(`Opens in ${h}h ${m}m`);
+      } else if (m > 0) {
+        setTimeToOpen(`Opens in ${m}m ${s}s`);
+      } else {
+        setTimeToOpen(`Opens in ${s}s`);
+      }
     };
 
     tick();
-    const id = setInterval(tick, 60_000);
+    if (startMs > Date.now()) {
+      id = setInterval(tick, 1000);
+    }
     return () => clearInterval(id);
   }, [issueModal, selectedReq]);
 
@@ -823,7 +842,6 @@ export default function AdminRequests() {
               {isFungible && <span className="ml-1 text-[9px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded uppercase">{item.consumable_id ? 'consumable' : 'qty'}</span>}
             </p>
             
-            {/* ⚡ Explicitly show the barcode for QTY/Consumable items */}
             {isFungible && (item.barcode || item.stock_barcode || item.consumable_barcode || item.inventory_item_barcode) && (
               <div className="mt-1.5">
                 <span className="text-[10px] font-mono font-bold text-gray-500 bg-black/5 px-1.5 py-0.5 rounded tracking-wide">
@@ -906,7 +924,6 @@ export default function AdminRequests() {
     const retDeadlineDate = new Date(retDeadlinePHT);
     if (retDeadlineDate <= new Date()) { toast.error('Return deadline must be in the future.'); return; }
 
-    // ⚡ Final Validation Pass to completely prevent conflicts!
     const windowTs = { startTs: Date.now(), endTs: retDeadlineDate.getTime() };
     for (const item of manualItems) {
       const isFungible = item.isQtyMode || !!item.consumable_id;
@@ -996,12 +1013,10 @@ export default function AdminRequests() {
           <div className="flex-1 overflow-y-auto bg-gray-50/30 custom-scrollbar">
             <div className="sticky top-0 bg-gray-100/90 backdrop-blur-sm border-b border-black/5 px-4 py-2 flex items-center justify-between z-10">
               <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Needs Action</span>
-              {/* ⚡ THE FIX: "Needs Action" badge strictly matches pending queue count! */}
               <span className="text-[10px] font-black bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{pendingQueue.length}</span>
             </div>
 
             <div className="p-3 space-y-2">
-              {/* ⚡ THE FIX: Queue empty check strictly matches pending queue! */}
               {pendingQueue.length === 0 && (
                 <div className="py-10 text-center text-gray-400">
                   <CheckCircle2 size={32} className="mx-auto mb-2 opacity-30" />
@@ -1009,11 +1024,11 @@ export default function AdminRequests() {
                 </div>
               )}
 
-              {/* ⚡ THE FIX: Only PENDING items rendered in "Needs Action" section */}
               {pendingQueue.map(r => (
                 <div key={r.id} className="bg-white border border-amber-200 rounded-xl p-3 shadow-sm relative overflow-hidden">
                   <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-400" />
-                  <button onClick={() => { setActiveTab('PENDING'); setSelectedDate(null); setSearchQuery(String(r.id)); setExpandedRow(r.id); }} className="w-full text-left pl-2">
+                  {/* ⚡ THE FIX: Removed setSearchQuery so the list doesn't auto-filter when clicking a row */}
+                  <button onClick={() => { setActiveTab('PENDING'); setSelectedDate(null); setExpandedRow(r.id); }} className="w-full text-left pl-2">
                     <div className="flex items-start justify-between mb-1">
                       <span className="text-xs font-black text-gray-800">#{r.id}</span>
                       <span className="text-[9px] font-bold text-amber-600">{fmtTime(r.created_at)}</span>
@@ -1154,6 +1169,14 @@ export default function AdminRequests() {
                             <button disabled={isRoomLocked} onClick={e => handleRejectClick(r, e)}  className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"><X size={14} />Deny</button>
                           </div>
                         )}
+                        {/* ⚡ THE FIX: "Issue" Button injected directly into the row for APPROVED requests! */}
+                        {r.status === 'APPROVED' && !r.isExpired && (
+                          <div className="hidden sm:flex gap-2">
+                            <button disabled={isRoomLocked} onClick={(e) => { e.stopPropagation(); openIssueModal(r); }} className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors shadow-sm">
+                              <Package size={14} /> Issue Items
+                            </button>
+                          </div>
+                        )}
                         <div className={`p-1.5 rounded-lg transition-colors ${isExpanded ? 'bg-gray-100 text-gray-900' : 'text-gray-400'}`}>
                           {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                         </div>
@@ -1182,6 +1205,13 @@ export default function AdminRequests() {
                               </div>
                             )}
                             {!slotTime && r.return_deadline && <p><strong>Deadline:</strong> <span className="text-gray-700">{fmtDateTimeFull(r.return_deadline)}</span></p>}
+                            
+                            {/* ⚡ THE FIX: Mobile-friendly "Issue Items" button inside expanded view */}
+                            {r.status === 'APPROVED' && !r.isExpired && (
+                              <button disabled={isRoomLocked} onClick={(e) => { e.stopPropagation(); openIssueModal(r); }} className="w-full mt-4 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors shadow-sm sm:hidden">
+                                <Package size={16} /> Issue Items Now
+                              </button>
+                            )}
                           </div>
 
                           <div>
@@ -1235,7 +1265,6 @@ export default function AdminRequests() {
                   
                   // 3. Navigate to that tab and expand the specific row
                   setActiveTab(targetTab); 
-                  setSearchQuery(String(booking.id)); 
                   setExpandedRow(booking.id);
 
                   // 4. Smooth UX: Auto-open the correct action modal based on the status!
