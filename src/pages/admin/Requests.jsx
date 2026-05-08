@@ -288,7 +288,10 @@ export default function AdminRequests() {
   const borrowerDropdownRef = useRef(null);
   const skipBorrowerSearch = useRef(false);
 
-  // ⚡ Refs for Synchronous Data Access inside Keydown Event
+  // ⚡ NEW: Track which APPROVED requests have been verified via QR scan!
+  const [scannedRequestIds, setScannedRequestIds] = useState([]);
+
+  // Refs for Synchronous Data Access inside Keydown Event
   const barcodeBufferRef = useRef('');
   const issueModalOpenRef  = useRef(false);
   const manualModalOpenRef = useRef(false);
@@ -356,7 +359,7 @@ export default function AdminRequests() {
 
   useEffect(() => { setExpandedRow(null); }, [activeTab]);
 
-  // ⚡ THE FIX: Real-time countdown clock in Issue Modal unlocking exactly at 0s
+  // Real-time countdown clock in Issue Modal unlocking exactly at 0s
   useEffect(() => {
     if (!issueModal || !selectedReq) return;
     const isReservation = !!(selectedReq.pickup_start || selectedReq.pickup_datetime || selectedReq.scheduled_time);
@@ -680,6 +683,9 @@ export default function AdminRequests() {
         toast.error(`This request belongs to a different room (${req.room_code || req.room_id}).`, { id: 'qr', duration: 5_000 }); return;
       }
 
+      // ⚡ Unlock the "Issue Items" row button for this request specifically!
+      setScannedRequestIds(prev => prev.includes(req.id) ? prev : [...prev, req.id]);
+
       setSelectedDate(null); setViewMode('list');
 
       let targetTab = 'ARCHIVED';
@@ -688,7 +694,7 @@ export default function AdminRequests() {
         else if (req.status === 'APPROVED') targetTab = 'APPROVED';
         else if (['ISSUED', 'PARTIALLY RETURNED'].includes(req.status)) targetTab = 'ISSUED';
       }
-      setActiveTab(targetTab); setSearchQuery(String(req.id)); setExpandedRow(req.id);
+      setActiveTab(targetTab); setExpandedRow(req.id); // Removed setSearchQuery
 
       setTimeout(() => {
         if (req.status === 'APPROVED') { toast.success('Request found — ready to issue.', { id: 'qr' }); openIssueModal(req); }
@@ -1027,7 +1033,6 @@ export default function AdminRequests() {
               {pendingQueue.map(r => (
                 <div key={r.id} className="bg-white border border-amber-200 rounded-xl p-3 shadow-sm relative overflow-hidden">
                   <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-400" />
-                  {/* ⚡ THE FIX: Removed setSearchQuery so the list doesn't auto-filter when clicking a row */}
                   <button onClick={() => { setActiveTab('PENDING'); setSelectedDate(null); setExpandedRow(r.id); }} className="w-full text-left pl-2">
                     <div className="flex items-start justify-between mb-1">
                       <span className="text-xs font-black text-gray-800">#{r.id}</span>
@@ -1169,8 +1174,7 @@ export default function AdminRequests() {
                             <button disabled={isRoomLocked} onClick={e => handleRejectClick(r, e)}  className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"><X size={14} />Deny</button>
                           </div>
                         )}
-                        {/* ⚡ THE FIX: "Issue" Button injected directly into the row for APPROVED requests! */}
-                        {r.status === 'APPROVED' && !r.isExpired && (
+                        {r.status === 'APPROVED' && !r.isExpired && scannedRequestIds.includes(r.id) && (
                           <div className="hidden sm:flex gap-2">
                             <button disabled={isRoomLocked} onClick={(e) => { e.stopPropagation(); openIssueModal(r); }} className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors shadow-sm">
                               <Package size={14} /> Issue Items
@@ -1206,8 +1210,7 @@ export default function AdminRequests() {
                             )}
                             {!slotTime && r.return_deadline && <p><strong>Deadline:</strong> <span className="text-gray-700">{fmtDateTimeFull(r.return_deadline)}</span></p>}
                             
-                            {/* ⚡ THE FIX: Mobile-friendly "Issue Items" button inside expanded view */}
-                            {r.status === 'APPROVED' && !r.isExpired && (
+                            {r.status === 'APPROVED' && !r.isExpired && scannedRequestIds.includes(r.id) && (
                               <button disabled={isRoomLocked} onClick={(e) => { e.stopPropagation(); openIssueModal(r); }} className="w-full mt-4 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors shadow-sm sm:hidden">
                                 <Package size={16} /> Issue Items Now
                               </button>
